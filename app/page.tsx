@@ -1,6 +1,6 @@
 "use client";
 import { Pokeball } from "@/components/pokeball";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   Card,
   CardContent,
@@ -17,7 +17,9 @@ import {
   Trophy,
   Users,
   Zap,
+  Crown,
   Heart,
+  ChevronRight,
   Skull,
   MapPin,
   RotateCcw,
@@ -176,11 +178,22 @@ export default function PokemonSoullink() {
     toggleBadge,
     importData,
     resetData,
+    toggleParty,
   } = useSoullinkData();
 
   const [activePlayer, setActivePlayer] = useState<"player1" | "player2">(
     "player1"
   );
+
+  const handleToggleParty = (pokemonId: string) => {
+    toggleParty(activePlayer, pokemonId);
+  };
+
+  // Berechne Party Count
+  const partyCount = useMemo(() => {
+    return data[activePlayer].team.filter((p) => p.isInParty).length;
+  }, [data, activePlayer]);
+
   const [searchTerm, setSearchTerm] = useState("");
   const [game, setGame] = useState<GameKey>("soulsilver");
 
@@ -371,9 +384,16 @@ export default function PokemonSoullink() {
                       <p className="text-xs text-muted-foreground">Lost</p>
                     </div>
                   </div>
+
                   <Progress
                     value={(player.badges / totalBadges) * 100}
                     className="h-2"
+                  />
+
+                  {/* STARTER TEAM ANZEIGE */}
+                  <StarterTeamDisplay
+                    starterTeam={player.team.filter((p) => p.isInParty)}
+                    playerName={player.name || `Player ${key.slice(-1)}`}
                   />
                 </CardContent>
               </Card>
@@ -396,7 +416,9 @@ export default function PokemonSoullink() {
 
         {/* Main Content Tabs */}
         <Tabs defaultValue="encounters" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
+            {" "}
+            {/* Von 4 auf 5 ändern */}
             <TabsTrigger value="encounters" className="flex items-center gap-2">
               <Zap className="h-4 w-4" />
               Encounters
@@ -404,6 +426,12 @@ export default function PokemonSoullink() {
             <TabsTrigger value="team" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
               Team
+            </TabsTrigger>
+            <TabsTrigger value="soullinks" className="flex items-center gap-2">
+              {" "}
+              {/* NEU */}
+              <ChevronRight className="h-4 w-4" />
+              Soullinks
             </TabsTrigger>
             <TabsTrigger value="badges" className="flex items-center gap-2">
               <Trophy className="h-4 w-4" />
@@ -414,6 +442,11 @@ export default function PokemonSoullink() {
               Graveyard
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="soullinks" className="space-y-4">
+            {/* NEU */}
+            <SoullinkConnections data={data} />
+          </TabsContent>
 
           {/* Encounters */}
           <TabsContent value="encounters" className="space-y-4">
@@ -503,6 +536,8 @@ export default function PokemonSoullink() {
                         pokemon={pokemon}
                         onKill={handleKillPokemon}
                         onDelete={handleDeletePokemon}
+                        onToggleParty={handleToggleParty} // <- Diese Zeile hinzufügen
+                        partyCount={partyCount} // <- Diese Zeile hinzufügen
                       />
                     ))}
                   </div>
@@ -610,5 +645,498 @@ export default function PokemonSoullink() {
         </Tabs>
       </div>
     </div>
+  );
+}
+
+interface PokeApiResponse {
+  sprites: {
+    front_default: string;
+    other: {
+      "official-artwork": {
+        front_default: string;
+      };
+    };
+  };
+}
+
+function StarterPokemonSprite({ pokemon }: { pokemon: Pokemon }) {
+  const [sprite, setSprite] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchSprite = async () => {
+      try {
+        const response = await fetch(
+          `https://pokeapi.co/api/v2/pokemon/${pokemon.species.toLowerCase()}`
+        );
+        if (response.ok) {
+          const data: PokeApiResponse = await response.json();
+          setSprite(
+            data.sprites?.other?.["official-artwork"]?.front_default ||
+              data.sprites?.front_default
+          );
+        }
+      } catch (error) {
+        console.error("Failed to fetch sprite:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSprite();
+  }, [pokemon.species]);
+
+  if (loading) {
+    return (
+      <div className="w-12 h-12 bg-slate-200 rounded-full animate-pulse"></div>
+    );
+  }
+
+  return sprite ? (
+    <div className="relative group">
+      <img
+        src={sprite}
+        alt={pokemon.species}
+        className={`w-12 h-12 object-contain rounded-full bg-gradient-to-br from-blue-50 to-purple-50 border-2 border-green-300 shadow-sm
+          ${pokemon.status === "dead" ? "grayscale opacity-60" : ""}
+        `}
+      />
+      {pokemon.status === "dead" && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="w-3 h-3 bg-red-500 rounded-full border border-white"></div>
+        </div>
+      )}
+      <div className="absolute -top-1 -right-1 w-4 h-4 bg-yellow-500 rounded-full border border-white flex items-center justify-center">
+        <Crown className="w-2 h-2 text-white" />
+      </div>
+    </div>
+  ) : (
+    <div className="w-12 h-12 border-2 border-green-300 bg-gradient-to-br from-green-100 to-blue-100 text-green-700 font-bold text-lg rounded-full flex items-center justify-center">
+      {pokemon.species[0]}
+    </div>
+  );
+}
+
+function StarterTeamDisplay({
+  starterTeam,
+  playerName,
+}: {
+  starterTeam: Pokemon[];
+  playerName: string;
+}) {
+  return (
+    <div className="mt-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Users className="h-4 w-4 text-green-600" />
+        <h4 className="font-semibold text-sm text-green-700">
+          Starter Team ({starterTeam.length}/6)
+        </h4>
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
+        {Array.from({ length: 6 }).map((_, index) => {
+          const pokemon = starterTeam[index];
+
+          if (pokemon) {
+            return (
+              <div key={pokemon.id} className="relative group">
+                <StarterPokemonSprite pokemon={pokemon} />
+                <div className="absolute bottom-12 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                  {pokemon.nickname || pokemon.name} (Lv. {pokemon.level})
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div
+              key={index}
+              className="w-12 h-12 border-2 border-dashed border-gray-300 rounded-full flex items-center justify-center text-gray-400"
+            >
+              <span className="text-xs">{index + 1}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SoullinkConnections({ data }: { data: any }) {
+  const [connections, setConnections] = useState<
+    Array<{
+      location: string;
+      player1Pokemon: Pokemon | null;
+      player2Pokemon: Pokemon | null;
+      isComplete: boolean;
+    }>
+  >([]);
+
+  useEffect(() => {
+    const findLocationConnections = () => {
+      const locationMap = new Map<
+        string,
+        {
+          location: string;
+          player1Pokemon: Pokemon | null;
+          player2Pokemon: Pokemon | null;
+        }
+      >();
+
+      // Sammle alle Pokemon beider Spieler
+      const allPlayer1Pokemon = [
+        ...data.player1.team,
+        ...data.player1.graveyard,
+        ...Object.values(data.player1.encounters).filter(Boolean),
+      ];
+
+      const allPlayer2Pokemon = [
+        ...data.player2.team,
+        ...data.player2.graveyard,
+        ...Object.values(data.player2.encounters).filter(Boolean),
+      ];
+
+      // Gruppiere nach Location
+      allPlayer1Pokemon.forEach((pokemon: Pokemon) => {
+        if (!locationMap.has(pokemon.location)) {
+          locationMap.set(pokemon.location, {
+            location: pokemon.location,
+            player1Pokemon: null,
+            player2Pokemon: null,
+          });
+        }
+        locationMap.get(pokemon.location)!.player1Pokemon = pokemon;
+      });
+
+      allPlayer2Pokemon.forEach((pokemon: Pokemon) => {
+        if (!locationMap.has(pokemon.location)) {
+          locationMap.set(pokemon.location, {
+            location: pokemon.location,
+            player1Pokemon: null,
+            player2Pokemon: null,
+          });
+        }
+        locationMap.get(pokemon.location)!.player2Pokemon = pokemon;
+      });
+
+      // Konvertiere zu Array mit isComplete Flag
+      const newConnections = Array.from(locationMap.values())
+        .filter((conn) => conn.player1Pokemon || conn.player2Pokemon)
+        .map((conn) => ({
+          ...conn,
+          isComplete: !!(conn.player1Pokemon && conn.player2Pokemon),
+        }))
+        .sort((a, b) => {
+          // Komplette Links zuerst, dann alphabetisch
+          if (a.isComplete && !b.isComplete) return -1;
+          if (!a.isComplete && b.isComplete) return 1;
+          return a.location.localeCompare(b.location);
+        });
+
+      setConnections(newConnections);
+    };
+
+    findLocationConnections();
+  }, [data]);
+
+  const completeConnections = connections.filter((c) => c.isComplete);
+  const incompleteConnections = connections.filter((c) => !c.isComplete);
+
+  return (
+    <div className="space-y-6">
+      {/* Active Soullinks */}
+      {completeConnections.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ChevronRight className="h-5 w-5 text-purple-500" />
+              Active Soullinks ({completeConnections.length})
+            </CardTitle>
+            <CardDescription>
+              Pokemon linked by shared encounter locations - if one falls, both
+              are affected
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {completeConnections.map((connection) => (
+                <LocationSoullinkCard
+                  key={connection.location}
+                  connection={connection}
+                  player1Name={data.player1.name || "Player 1"}
+                  player2Name={data.player2.name || "Player 2"}
+                />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Potential Links */}
+      {incompleteConnections.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-gray-500" />
+              Potential Soullinks ({incompleteConnections.length})
+            </CardTitle>
+            <CardDescription>
+              Locations where only one player has caught a Pokemon
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3">
+              {incompleteConnections.map((connection) => (
+                <PotentialSoullinkCard
+                  key={connection.location}
+                  connection={connection}
+                  player1Name={data.player1.name || "Player 1"}
+                  player2Name={data.player2.name || "Player 2"}
+                />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Empty State */}
+      {connections.length === 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ChevronRight className="h-5 w-5 text-purple-500" />
+              Location-Based Soullinks
+            </CardTitle>
+            <CardDescription>
+              Pokemon from the same location are automatically linked
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="text-center py-8">
+              <div className="w-16 h-16 bg-purple-100 rounded-full mx-auto mb-4 flex items-center justify-center">
+                <MapPin className="h-8 w-8 text-purple-400" />
+              </div>
+              <p className="text-muted-foreground">
+                No encounters yet - start catching Pokemon to create Soullinks
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function LocationSoullinkCard({
+  connection,
+  player1Name,
+  player2Name,
+}: {
+  connection: {
+    location: string;
+    player1Pokemon: Pokemon | null;
+    player2Pokemon: Pokemon | null;
+    isComplete: boolean;
+  };
+  player1Name: string;
+  player2Name: string;
+}) {
+  const p1 = connection.player1Pokemon!;
+  const p2 = connection.player2Pokemon!;
+
+  const bothAlive = p1.status === "alive" && p2.status === "alive";
+  const bothDead = p1.status === "dead" && p2.status === "dead";
+  const onlyOneDead = (p1.status === "dead") !== (p2.status === "dead");
+
+  return (
+    <div
+      className={`
+      relative overflow-hidden rounded-xl border-2 p-6 transition-all duration-300
+      ${
+        bothAlive
+          ? "border-green-300 bg-gradient-to-r from-green-50 to-blue-50"
+          : ""
+      }
+      ${
+        bothDead ? "border-red-300 bg-gradient-to-r from-red-50 to-gray-50" : ""
+      }
+      ${
+        onlyOneDead
+          ? "border-yellow-300 bg-gradient-to-r from-yellow-50 to-orange-50"
+          : ""
+      }
+    `}
+    >
+      {/* Location Header */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-muted-foreground" />
+          <span className="font-semibold text-sm">{connection.location}</span>
+        </div>
+        <div>
+          {bothAlive && (
+            <div className="bg-green-500 text-white px-2 py-1 rounded-full text-xs font-bold">
+              ACTIVE LINK
+            </div>
+          )}
+          {bothDead && (
+            <div className="bg-red-500 text-white px-2 py-1 rounded-full text-xs font-bold">
+              BOTH FALLEN
+            </div>
+          )}
+          {onlyOneDead && (
+            <div className="bg-yellow-500 text-white px-2 py-1 rounded-full text-xs font-bold">
+              DANGER!
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 items-center gap-4">
+        {/* Player 1 Pokemon */}
+        <div className="text-center space-y-2">
+          <StarterPokemonSprite pokemon={p1} />
+          <div>
+            <p className="font-semibold text-sm">{p1.nickname || p1.name}</p>
+            <p className="text-xs text-muted-foreground">
+              {player1Name} • Lv. {p1.level}
+            </p>
+            <div
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium
+              ${
+                p1.status === "alive"
+                  ? "bg-green-100 text-green-700"
+                  : "bg-red-100 text-red-700"
+              }
+            `}
+            >
+              {p1.status === "alive" ? "ALIVE" : "FAINTED"}
+            </div>
+          </div>
+        </div>
+
+        {/* Connection Indicator */}
+        <div className="text-center">
+          <div className="flex items-center justify-center">
+            <div
+              className={`w-8 h-0.5 ${
+                bothAlive ? "bg-green-400" : "bg-red-400"
+              }`}
+            ></div>
+            <div
+              className={`w-6 h-6 rounded-full border-2 mx-2 flex items-center justify-center
+              ${
+                bothAlive
+                  ? "border-green-400 bg-green-100"
+                  : "border-red-400 bg-red-100"
+              }
+            `}
+            >
+              <MapPin
+                className={`w-3 h-3 ${
+                  bothAlive ? "text-green-600" : "text-red-600"
+                }`}
+              />
+            </div>
+            <div
+              className={`w-8 h-0.5 ${
+                bothAlive ? "bg-green-400" : "bg-red-400"
+              }`}
+            ></div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Same Location</p>
+        </div>
+
+        {/* Player 2 Pokemon */}
+        <div className="text-center space-y-2">
+          <StarterPokemonSprite pokemon={p2} />
+          <div>
+            <p className="font-semibold text-sm">{p2.nickname || p2.name}</p>
+            <p className="text-xs text-muted-foreground">
+              {player2Name} • Lv. {p2.level}
+            </p>
+            <div
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium
+              ${
+                p2.status === "alive"
+                  ? "bg-green-100 text-green-700"
+                  : "bg-red-100 text-red-700"
+              }
+            `}
+            >
+              {p2.status === "alive" ? "ALIVE" : "FAINTED"}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Warning Message */}
+      {onlyOneDead && (
+        <div className="mt-4 p-3 bg-yellow-100 border border-yellow-300 rounded-lg">
+          <p className="text-sm font-medium text-yellow-800">
+            ⚠️ Soullink Broken! One Pokemon from {connection.location} has
+            fallen. Handle the partner according to your Soullink rules.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 5. KOMPONENTE: Potential Soullink Card
+function PotentialSoullinkCard({
+  connection,
+  player1Name,
+  player2Name,
+}: {
+  connection: {
+    location: string;
+    player1Pokemon: Pokemon | null;
+    player2Pokemon: Pokemon | null;
+  };
+  player1Name: string;
+  player2Name: string;
+}) {
+  const existingPokemon =
+    connection.player1Pokemon || connection.player2Pokemon!;
+  const missingPlayer = connection.player1Pokemon ? player2Name : player1Name;
+
+  return (
+    <div className="flex items-center justify-between p-4 border border-dashed border-gray-300 rounded-lg bg-gray-50/50">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-gray-200 rounded-lg flex items-center justify-center">
+          <MapPin className="h-5 w-5 text-gray-400" />
+        </div>
+        <div>
+          <h4 className="font-medium text-sm">{connection.location}</h4>
+          <p className="text-xs text-muted-foreground">
+            {existingPokemon.nickname || existingPokemon.name} (
+            {existingPokemon.status}) • Waiting for {missingPlayer} encounter
+          </p>
+        </div>
+      </div>
+      <div className="text-right">
+        <div className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+          Incomplete Link
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function findSoullinkPartner(pokemon: Pokemon, data: any): Pokemon | null {
+  const otherPlayer = pokemon.id.includes("player1") ? "player2" : "player1";
+
+  // Suche Pokemon mit gleicher Location beim anderen Spieler
+  const allOtherPlayerPokemon = [
+    ...data[otherPlayer].team,
+    ...data[otherPlayer].graveyard,
+    ...Object.values(data[otherPlayer].encounters).filter(Boolean),
+  ];
+
+  return (
+    allOtherPlayerPokemon.find(
+      (p: Pokemon) => p && p.location === pokemon.location
+    ) || null
   );
 }

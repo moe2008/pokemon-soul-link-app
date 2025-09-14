@@ -1,40 +1,43 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
+import { useState, useEffect } from "react";
 
 export interface Pokemon {
-  id: string
-  name: string
-  species: string
-  level: number
-  location: string
-  status: "alive" | "dead"
-  nickname?: string
-  caughtAt: string
-  diedAt?: string
-  cause?: string
+  id: string;
+  name: string;
+  species: string;
+  level: number;
+  location: string;
+  status: "alive" | "dead";
+  nickname?: string;
+  caughtAt: string;
+  diedAt?: string;
+  cause?: string;
+  isInParty?: boolean;
+  linkedPokemonId?: string;
 }
 
 export interface Player {
-  name: string
-  avatar: string
-  badges: number
-  alive: number
-  dead: number
-  team: Pokemon[]
-  encounters: Record<string, Pokemon | null>
-  graveyard: Pokemon[]
-  earnedBadges: Record<string, boolean>
+  name: string;
+  avatar: string;
+  badges: number;
+  alive: number;
+  dead: number;
+  team: Pokemon[];
+  encounters: Record<string, Pokemon | null>;
+  graveyard: Pokemon[];
+  earnedBadges: Record<string, boolean>;
+  starterTeam?: Pokemon[];
 }
 
 export interface SoullinkData {
-  player1: Player
-  player2: Player
-  gameVersion: string
-  startDate: string
-  rules: string[]
-  lastSync?: string
-  syncId?: string
+  player1: Player;
+  player2: Player;
+  gameVersion: string;
+  startDate: string;
+  rules: string[];
+  lastSync?: string;
+  syncId?: string;
 }
 
 const defaultPlayer: Player = {
@@ -47,7 +50,7 @@ const defaultPlayer: Player = {
   encounters: {},
   graveyard: [],
   earnedBadges: {},
-}
+};
 
 const defaultData: SoullinkData = {
   player1: { ...defaultPlayer, name: "Player 1" },
@@ -60,46 +63,50 @@ const defaultData: SoullinkData = {
     "All Pokemon must be nicknamed",
     "Both players must coordinate their catches and releases",
   ],
-}
+};
 
 export function useSoullinkData() {
-  const [data, setData] = useState<SoullinkData>(defaultData)
-  const [isLoading, setIsLoading] = useState(true)
+  const [data, setData] = useState<SoullinkData>(defaultData);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Load data from localStorage on mount
   useEffect(() => {
-    const savedData = localStorage.getItem("pokemon-soullink-data")
+    const savedData = localStorage.getItem("pokemon-soullink-data");
     if (savedData) {
       try {
-        const parsed = JSON.parse(savedData)
+        const parsed = JSON.parse(savedData);
         // Ensure earnedBadges exists for backward compatibility
         if (parsed.player1 && !parsed.player1.earnedBadges) {
-          parsed.player1.earnedBadges = {}
+          parsed.player1.earnedBadges = {};
         }
         if (parsed.player2 && !parsed.player2.earnedBadges) {
-          parsed.player2.earnedBadges = {}
+          parsed.player2.earnedBadges = {};
         }
-        setData(parsed)
+        setData(parsed);
       } catch (error) {
-        console.error("Failed to parse saved data:", error)
+        console.error("Failed to parse saved data:", error);
       }
     }
 
-    const urlParams = new URLSearchParams(window.location.search)
-    const sharedData = urlParams.get("data")
+    const urlParams = new URLSearchParams(window.location.search);
+    const sharedData = urlParams.get("data");
     if (sharedData) {
       try {
-        const decoded = JSON.parse(atob(sharedData))
-        setData(decoded)
+        const decoded = JSON.parse(atob(sharedData));
+        setData(decoded);
         // Clean up URL
-        window.history.replaceState({}, document.title, window.location.pathname)
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname
+        );
       } catch (error) {
-        console.error("Failed to parse shared data:", error)
+        console.error("Failed to parse shared data:", error);
       }
     }
 
-    setIsLoading(false)
-  }, [])
+    setIsLoading(false);
+  }, []);
 
   // Save data to localStorage whenever it changes
   useEffect(() => {
@@ -107,34 +114,40 @@ export function useSoullinkData() {
       const dataToSave = {
         ...data,
         lastSync: new Date().toISOString(),
-      }
-      localStorage.setItem("pokemon-soullink-data", JSON.stringify(dataToSave))
+      };
+      localStorage.setItem("pokemon-soullink-data", JSON.stringify(dataToSave));
     }
-  }, [data, isLoading])
+  }, [data, isLoading]);
 
-  const updatePlayer = (playerKey: "player1" | "player2", updates: Partial<Player>) => {
+  const updatePlayer = (
+    playerKey: "player1" | "player2",
+    updates: Partial<Player>
+  ) => {
     setData((prev) => ({
       ...prev,
       [playerKey]: {
         ...prev[playerKey],
         ...updates,
       },
-    }))
-  }
+    }));
+  };
 
-  const addPokemon = (playerKey: "player1" | "player2", pokemon: Omit<Pokemon, "id">) => {
+  const addPokemon = (
+    playerKey: "player1" | "player2",
+    pokemon: Omit<Pokemon, "id">
+  ) => {
     const newPokemon: Pokemon = {
       ...pokemon,
       id: Date.now().toString(),
-    }
+    };
 
     setData((prev) => {
-      const player = prev[playerKey]
-      const updatedTeam = [...player.team, newPokemon]
+      const player = prev[playerKey];
+      const updatedTeam = [...player.team, newPokemon];
       const updatedEncounters = {
         ...player.encounters,
         [pokemon.location]: newPokemon,
-      }
+      };
 
       return {
         ...prev,
@@ -144,25 +157,29 @@ export function useSoullinkData() {
           encounters: updatedEncounters,
           alive: player.alive + 1,
         },
-      }
-    })
+      };
+    });
 
-    return newPokemon
-  }
+    return newPokemon;
+  };
 
-  const killPokemon = (playerKey: "player1" | "player2", pokemonId: string, cause?: string) => {
+  const killPokemon = (
+    playerKey: "player1" | "player2",
+    pokemonId: string,
+    cause?: string
+  ) => {
     setData((prev) => {
-      const player = prev[playerKey]
-      const pokemon = player.team.find((p) => p.id === pokemonId)
+      const player = prev[playerKey];
+      const pokemon = player.team.find((p) => p.id === pokemonId);
 
-      if (!pokemon) return prev
+      if (!pokemon) return prev;
 
       const deadPokemon: Pokemon = {
         ...pokemon,
         status: "dead",
         diedAt: new Date().toISOString(),
         cause,
-      }
+      };
 
       return {
         ...prev,
@@ -173,23 +190,26 @@ export function useSoullinkData() {
           alive: player.alive - 1,
           dead: player.dead + 1,
         },
-      }
-    })
-  }
+      };
+    });
+  };
 
-  const revivePokemon = (playerKey: "player1" | "player2", pokemonId: string) => {
+  const revivePokemon = (
+    playerKey: "player1" | "player2",
+    pokemonId: string
+  ) => {
     setData((prev) => {
-      const player = prev[playerKey]
-      const pokemon = player.graveyard.find((p) => p.id === pokemonId)
+      const player = prev[playerKey];
+      const pokemon = player.graveyard.find((p) => p.id === pokemonId);
 
-      if (!pokemon) return prev
+      if (!pokemon) return prev;
 
       const revivedPokemon: Pokemon = {
         ...pokemon,
         status: "alive",
         diedAt: undefined,
         cause: undefined,
-      }
+      };
 
       return {
         ...prev,
@@ -200,24 +220,27 @@ export function useSoullinkData() {
           alive: player.alive + 1,
           dead: player.dead - 1,
         },
-      }
-    })
-  }
+      };
+    });
+  };
 
-  const deletePokemon = (playerKey: "player1" | "player2", pokemonId: string) => {
+  const deletePokemon = (
+    playerKey: "player1" | "player2",
+    pokemonId: string
+  ) => {
     setData((prev) => {
-      const player = prev[playerKey]
+      const player = prev[playerKey];
 
       // Check if pokemon is in team
-      const teamPokemon = player.team.find((p) => p.id === pokemonId)
+      const teamPokemon = player.team.find((p) => p.id === pokemonId);
       if (teamPokemon) {
         // Remove from encounters if it exists there
-        const updatedEncounters = { ...player.encounters }
+        const updatedEncounters = { ...player.encounters };
         Object.keys(updatedEncounters).forEach((location) => {
           if (updatedEncounters[location]?.id === pokemonId) {
-            updatedEncounters[location] = null
+            updatedEncounters[location] = null;
           }
-        })
+        });
 
         return {
           ...prev,
@@ -227,19 +250,19 @@ export function useSoullinkData() {
             encounters: updatedEncounters,
             alive: player.alive - 1,
           },
-        }
+        };
       }
 
       // Check if pokemon is in graveyard
-      const graveyardPokemon = player.graveyard.find((p) => p.id === pokemonId)
+      const graveyardPokemon = player.graveyard.find((p) => p.id === pokemonId);
       if (graveyardPokemon) {
         // Remove from encounters if it exists there
-        const updatedEncounters = { ...player.encounters }
+        const updatedEncounters = { ...player.encounters };
         Object.keys(updatedEncounters).forEach((location) => {
           if (updatedEncounters[location]?.id === pokemonId) {
-            updatedEncounters[location] = null
+            updatedEncounters[location] = null;
           }
-        })
+        });
 
         return {
           ...prev,
@@ -249,24 +272,24 @@ export function useSoullinkData() {
             encounters: updatedEncounters,
             dead: player.dead - 1,
           },
-        }
+        };
       }
 
-      return prev
-    })
-  }
+      return prev;
+    });
+  };
 
   const toggleBadge = (playerKey: "player1" | "player2", badgeId: string) => {
     setData((prev) => {
-      const player = prev[playerKey]
-      const currentlyEarned = player.earnedBadges[badgeId] || false
+      const player = prev[playerKey];
+      const currentlyEarned = player.earnedBadges[badgeId] || false;
       const newEarnedBadges = {
         ...player.earnedBadges,
         [badgeId]: !currentlyEarned,
-      }
+      };
 
       // Count total badges
-      const totalBadges = Object.values(newEarnedBadges).filter(Boolean).length
+      const totalBadges = Object.values(newEarnedBadges).filter(Boolean).length;
 
       return {
         ...prev,
@@ -275,31 +298,141 @@ export function useSoullinkData() {
           earnedBadges: newEarnedBadges,
           badges: totalBadges,
         },
-      }
-    })
-  }
+      };
+    });
+  };
+
+  const toggleParty = (playerKey: "player1" | "player2", pokemonId: string) => {
+    setData((prevData) => {
+      const player = prevData[playerKey];
+      const currentPartyCount = player.team.filter((p) => p.isInParty).length;
+
+      const updatedTeam = player.team.map((pokemon) => {
+        if (pokemon.id === pokemonId) {
+          // Wenn Pokemon im Party ist, entfernen
+          if (pokemon.isInParty) {
+            return { ...pokemon, isInParty: false };
+          }
+
+          // Wenn hinzufügen und Party nicht voll und Pokemon lebt
+          if (currentPartyCount < 6 && pokemon.status === "alive") {
+            return { ...pokemon, isInParty: true };
+          }
+        }
+        return pokemon;
+      });
+
+      // Auch encounters updaten falls das Pokemon dort ist
+      const updatedEncounters = Object.fromEntries(
+        Object.entries(player.encounters).map(([location, encounter]) => {
+          if (encounter && encounter.id === pokemonId) {
+            if (encounter.isInParty) {
+              return [location, { ...encounter, isInParty: false }];
+            }
+            if (currentPartyCount < 6 && encounter.status === "alive") {
+              return [location, { ...encounter, isInParty: true }];
+            }
+          }
+          return [location, encounter];
+        })
+      );
+
+      return {
+        ...prevData,
+        [playerKey]: {
+          ...player,
+          team: updatedTeam,
+          encounters: updatedEncounters,
+        },
+      };
+    });
+  };
 
   const importData = (newData: SoullinkData) => {
     setData({
       ...newData,
       lastSync: new Date().toISOString(),
-    })
-  }
+    });
+  };
 
   const addBadge = (playerKey: "player1" | "player2") => {
     updatePlayer(playerKey, {
       badges: data[playerKey].badges + 1,
-    })
-  }
+    });
+  };
 
   const resetData = () => {
-    setData(defaultData)
-    localStorage.removeItem("pokemon-soullink-data")
-  }
+    setData(defaultData);
+    localStorage.removeItem("pokemon-soullink-data");
+  };
+
+  const linkPokemon = (player1PokemonId: string, player2PokemonId: string) => {
+    setData((prevData) => {
+      const updatePokemonInArrays = (pokemon: Pokemon, linkedId: string) => ({
+        ...pokemon,
+        linkedPokemonId: linkedId,
+      });
+
+      const updatePlayer1 = {
+        ...prevData.player1,
+        team: prevData.player1.team.map((p) =>
+          p.id === player1PokemonId
+            ? updatePokemonInArrays(p, player2PokemonId)
+            : p
+        ),
+        graveyard: prevData.player1.graveyard.map((p) =>
+          p.id === player1PokemonId
+            ? updatePokemonInArrays(p, player2PokemonId)
+            : p
+        ),
+        encounters: Object.fromEntries(
+          Object.entries(prevData.player1.encounters).map(
+            ([location, pokemon]) => [
+              location,
+              pokemon && pokemon.id === player1PokemonId
+                ? updatePokemonInArrays(pokemon, player2PokemonId)
+                : pokemon,
+            ]
+          )
+        ),
+      };
+
+      const updatePlayer2 = {
+        ...prevData.player2,
+        team: prevData.player2.team.map((p) =>
+          p.id === player2PokemonId
+            ? updatePokemonInArrays(p, player1PokemonId)
+            : p
+        ),
+        graveyard: prevData.player2.graveyard.map((p) =>
+          p.id === player2PokemonId
+            ? updatePokemonInArrays(p, player1PokemonId)
+            : p
+        ),
+        encounters: Object.fromEntries(
+          Object.entries(prevData.player2.encounters).map(
+            ([location, pokemon]) => [
+              location,
+              pokemon && pokemon.id === player2PokemonId
+                ? updatePokemonInArrays(pokemon, player1PokemonId)
+                : pokemon,
+            ]
+          )
+        ),
+      };
+
+      return {
+        ...prevData,
+        player1: updatePlayer1,
+        player2: updatePlayer2,
+      };
+    });
+  };
 
   return {
     data,
     isLoading,
+    linkPokemon,
     updatePlayer,
     addPokemon,
     killPokemon,
@@ -309,5 +442,6 @@ export function useSoullinkData() {
     importData,
     addBadge,
     resetData,
-  }
+    toggleParty,
+  };
 }
