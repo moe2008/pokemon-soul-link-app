@@ -16,17 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Plus, Zap, Search, Loader2, Star, Heart } from "lucide-react";
-
-interface Pokemon {
-  id: string;
-  name: string;
-  species: string;
-  level: number;
-  location: string;
-  status: "alive" | "dead" | "boxed";
-  nickname?: string;
-  caughtAt: string;
-}
+import { Pokemon } from "@/hooks/use-soullink-data";
 
 interface PokemonSpecies {
   name: string;

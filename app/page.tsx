@@ -17,6 +17,8 @@ import {
   Trophy,
   Users,
   Zap,
+  Filter,
+  Wifi,
   Crown,
   Heart,
   ChevronRight,
@@ -36,7 +38,12 @@ import {
   type Player,
   type Pokemon,
 } from "@/hooks/use-soullink-data";
-
+import {
+  WebRTCRoomDialog,
+  WebRTCStatusIndicator,
+  WebRTCSyncButton,
+} from "@/components/webrtc-room-dialog";
+import { useWebRTCSoullink } from "@/hooks/use-webrtc-soullink";
 // --- EXISTIERENDE DATEN ---
 import { soulSilverLocations } from "@/data/soul-silver-locations";
 import { soulSilverBadges, kantoBadges } from "@/data/soul-silver-badges";
@@ -181,13 +188,20 @@ export default function PokemonSoullink() {
     toggleParty,
   } = useSoullinkData();
 
+  const webrtc = useWebRTCSoullink(importData);
+
+  const {
+    isConnected,
+    connectionStatus,
+    roomInfo,
+    syncPlayerUpdate,
+    syncBadgeUpdate,
+    syncPokemonAction,
+  } = webrtc;
+
   const [activePlayer, setActivePlayer] = useState<"player1" | "player2">(
     "player1"
   );
-
-  const handleToggleParty = (pokemonId: string) => {
-    toggleParty(activePlayer, pokemonId);
-  };
 
   // Berechne Party Count
   const partyCount = useMemo(() => {
@@ -226,29 +240,83 @@ export default function PokemonSoullink() {
     player: Player
   ) => {
     updatePlayer(playerKey, player);
+
+    // FIXED: Wait for state update and sync fresh data
+    setTimeout(() => {
+      if (isConnected) {
+        syncPlayerUpdate(playerKey); // No need to pass stale data
+      }
+    }, 100);
   };
 
   const handleAddPokemon = (pokemon: Omit<Pokemon, "id">) => {
-    addPokemon(activePlayer, pokemon);
+    const newPokemon = addPokemon(activePlayer, pokemon);
+
+    // FIXED: Sync fresh data after state update
+    setTimeout(() => {
+      if (isConnected) {
+        syncPokemonAction("add", activePlayer, pokemon);
+      }
+    }, 100);
   };
 
   const handleKillPokemon = (pokemonId: string, cause?: string) => {
     killPokemon(activePlayer, pokemonId, cause);
+
+    // FIXED: Sync fresh data after state update
+    setTimeout(() => {
+      if (isConnected) {
+        syncPokemonAction("kill", activePlayer, undefined, pokemonId, cause);
+      }
+    }, 100);
   };
 
   const handleRevivePokemon = (pokemonId: string) => {
     revivePokemon(activePlayer, pokemonId);
+
+    // FIXED: Sync fresh data after state update
+    setTimeout(() => {
+      if (isConnected) {
+        syncPokemonAction("revive", activePlayer, undefined, pokemonId);
+      }
+    }, 100);
   };
 
   const handleDeletePokemon = (pokemonId: string) => {
     deletePokemon(activePlayer, pokemonId);
+
+    // FIXED: Sync fresh data after state update
+    setTimeout(() => {
+      if (isConnected) {
+        syncPokemonAction("delete", activePlayer, undefined, pokemonId);
+      }
+    }, 100);
   };
 
   const handleToggleBadge = (
     badgeId: string,
     playerKey: "player1" | "player2"
   ) => {
+    const wasEarned = data[playerKey].earnedBadges[badgeId] || false;
     toggleBadge(playerKey, badgeId);
+
+    // FIXED: Sync fresh data after state update
+    setTimeout(() => {
+      if (isConnected) {
+        syncBadgeUpdate(playerKey, badgeId, !wasEarned);
+      }
+    }, 100);
+  };
+
+  const handleToggleParty = (pokemonId: string) => {
+    toggleParty(activePlayer, pokemonId);
+
+    // FIXED: Sync fresh data after state update
+    setTimeout(() => {
+      if (isConnected) {
+        syncPlayerUpdate(activePlayer); // Will get fresh data automatically
+      }
+    }, 100);
   };
 
   return (
@@ -273,6 +341,20 @@ export default function PokemonSoullink() {
               <SoullinkRulesDialog />
               <SoullinkTutorialDialog />
               <SyncDialog data={data} onImportData={importData} />
+
+              {/* WebRTC Controls */}
+              <WebRTCRoomDialog webrtc={webrtc}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex items-center gap-2"
+                >
+                  <Wifi className="h-4 w-4" />
+                  {isConnected ? "Room Settings" : "Connect"}
+                </Button>
+              </WebRTCRoomDialog>
+
+              <WebRTCSyncButton webrtc={webrtc} />
               <Button
                 variant="outline"
                 size="sm"
@@ -284,8 +366,34 @@ export default function PokemonSoullink() {
               </Button>
             </div>
           </div>
+          {roomInfo && (
+            <div className="mx-auto max-w-md">
+              <div
+                className={`p-3 rounded-lg border ${
+                  isConnected
+                    ? "bg-green-50 border-green-200 text-green-800"
+                    : "bg-yellow-50 border-yellow-200 text-yellow-800"
+                }`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <Wifi
+                    className={`h-4 w-4 ${
+                      isConnected ? "text-green-600" : "text-yellow-600"
+                    }`}
+                  />
+                  <span className="text-sm font-medium">
+                    {isConnected
+                      ? "Real-time collaboration active"
+                      : "Connecting to partner..."}
+                  </span>
+                </div>
+                <p className="text-xs text-center mt-1">
+                  Room: {roomInfo.name} • {roomInfo.isHost ? "Host" : "Guest"}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
-
         {/* Spielauswahl */}
         <Card className="border-none shadow-none bg-transparent">
           <CardHeader className="pb-2">
@@ -445,7 +553,7 @@ export default function PokemonSoullink() {
 
           <TabsContent value="soullinks" className="space-y-4">
             {/* NEU */}
-            <SoullinkConnections data={data} />
+            <SoullinkManager data={data} />
           </TabsContent>
 
           {/* Encounters */}
@@ -887,7 +995,7 @@ function SoullinkConnections({ data }: { data: any }) {
           <CardContent>
             <div className="grid gap-3">
               {incompleteConnections.map((connection) => (
-                <PotentialSoullinkCard
+                <LocationSoullinkCard
                   key={connection.location}
                   connection={connection}
                   player1Name={data.player1.name || "Player 1"}
@@ -941,8 +1049,46 @@ function LocationSoullinkCard({
   player1Name: string;
   player2Name: string;
 }) {
-  const p1 = connection.player1Pokemon!;
-  const p2 = connection.player2Pokemon!;
+  const p1 = connection.player1Pokemon;
+  const p2 = connection.player2Pokemon;
+
+  // Handle incomplete connections
+  if (!connection.isComplete) {
+    const existingPokemon = p1 || p2;
+    const missingPlayer = p1 ? player2Name : player1Name;
+
+    if (!existingPokemon) {
+      return null; // Should not happen, but safety check
+    }
+
+    return (
+      <div className="flex items-center justify-between p-4 border border-dashed border-gray-300 rounded-lg bg-gray-50/50">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gray-200 rounded-lg flex items-center justify-center">
+            <MapPin className="h-5 w-5 text-gray-400" />
+          </div>
+          <div>
+            <h4 className="font-medium text-sm">{connection.location}</h4>
+            <p className="text-xs text-muted-foreground">
+              {existingPokemon.nickname || existingPokemon.name} (
+              {existingPokemon.status}) • Waiting for {missingPlayer} encounter
+            </p>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+            Incomplete Link
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Handle complete connections - both Pokemon exist
+  if (!p1 || !p2) {
+    console.error("Complete connection missing Pokemon data:", connection);
+    return null;
+  }
 
   const bothAlive = p1.status === "alive" && p2.status === "alive";
   const bothDead = p1.status === "dead" && p2.status === "dead";
@@ -965,6 +1111,11 @@ function LocationSoullinkCard({
           ? "border-yellow-300 bg-gradient-to-r from-yellow-50 to-orange-50"
           : ""
       }
+      ${
+        !bothAlive && !bothDead && !onlyOneDead
+          ? "border-gray-300 bg-gradient-to-r from-gray-50 to-gray-100"
+          : ""
+      }
     `}
     >
       {/* Location Header */}
@@ -976,17 +1127,17 @@ function LocationSoullinkCard({
         <div>
           {bothAlive && (
             <div className="bg-green-500 text-white px-2 py-1 rounded-full text-xs font-bold">
-              ACTIVE LINK
+              AKTIVER LINK
             </div>
           )}
           {bothDead && (
             <div className="bg-red-500 text-white px-2 py-1 rounded-full text-xs font-bold">
-              BOTH FALLEN
+              TOTER LINK
             </div>
           )}
           {onlyOneDead && (
             <div className="bg-yellow-500 text-white px-2 py-1 rounded-full text-xs font-bold">
-              DANGER!
+              GEFAHR!
             </div>
           )}
         </div>
@@ -1010,7 +1161,7 @@ function LocationSoullinkCard({
               }
             `}
             >
-              {p1.status === "alive" ? "ALIVE" : "FAINTED"}
+              {p1.status === "alive" ? "LEBENDIG" : "K.O."}
             </div>
           </div>
         </div>
@@ -1044,7 +1195,7 @@ function LocationSoullinkCard({
               }`}
             ></div>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">Same Location</p>
+          <p className="text-xs text-muted-foreground mt-1">Gleicher Ort</p>
         </div>
 
         {/* Player 2 Pokemon */}
@@ -1064,18 +1215,18 @@ function LocationSoullinkCard({
               }
             `}
             >
-              {p2.status === "alive" ? "ALIVE" : "FAINTED"}
+              {p2.status === "alive" ? "LEBENDIG" : "K.O."}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Warning Message */}
+      {/* Info Message for Mixed Status */}
       {onlyOneDead && (
-        <div className="mt-4 p-3 bg-yellow-100 border border-yellow-300 rounded-lg">
-          <p className="text-sm font-medium text-yellow-800">
-            ⚠️ Soullink Broken! One Pokemon from {connection.location} has
-            fallen. Handle the partner according to your Soullink rules.
+        <div className="mt-4 p-3 bg-gray-100 border border-gray-300 rounded-lg">
+          <p className="text-sm font-medium text-gray-800">
+            ℹ️ Ein Pokémon von {connection.location} ist gefallen, das andere
+            lebt noch.
           </p>
         </div>
       )}
@@ -1083,6 +1234,422 @@ function LocationSoullinkCard({
   );
 }
 
+const mockConnections = [
+  {
+    location: "Route 1",
+    player1Pokemon: {
+      name: "Pikachu",
+      nickname: "Sparky",
+      level: 15,
+      status: "alive",
+    },
+    player2Pokemon: {
+      name: "Charmander",
+      nickname: "Blaze",
+      level: 14,
+      status: "alive",
+    },
+    isComplete: true,
+  },
+  {
+    location: "Viridian Forest",
+    player1Pokemon: {
+      name: "Caterpie",
+      nickname: "Wormy",
+      level: 8,
+      status: "dead",
+    },
+    player2Pokemon: {
+      name: "Weedle",
+      nickname: null,
+      level: 7,
+      status: "dead",
+    },
+    isComplete: true,
+  },
+  {
+    location: "Mt. Moon",
+    player1Pokemon: {
+      name: "Geodude",
+      nickname: "Rocky",
+      level: 12,
+      status: "alive",
+    },
+    player2Pokemon: {
+      name: "Zubat",
+      nickname: "Wings",
+      level: 11,
+      status: "dead",
+    },
+    isComplete: true,
+  },
+];
+
+function SoullinkManager({ data }: { data: any }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortFilter, setSortFilter] = useState("all");
+
+  // FIXED: Korrigierte Logik für Soullink-Erkennung
+  const connections = useMemo(() => {
+    const locationMap = new Map<
+      string,
+      {
+        location: string;
+        player1Pokemon: Pokemon | null;
+        player2Pokemon: Pokemon | null;
+      }
+    >();
+
+    // FIXED: Sammle ALLE Pokemon (lebende UND tote) beider Spieler
+    const allPlayer1Pokemon = [
+      ...data.player1.team,
+      ...data.player1.graveyard,
+      ...Object.values(data.player1.encounters).filter(Boolean),
+    ];
+
+    const allPlayer2Pokemon = [
+      ...data.player2.team,
+      ...data.player2.graveyard,
+      ...Object.values(data.player2.encounters).filter(Boolean),
+    ];
+
+    console.log(
+      "Player 1 Pokemon:",
+      allPlayer1Pokemon.map((p) => `${p.name} (${p.location}) - ${p.status}`)
+    );
+    console.log(
+      "Player 2 Pokemon:",
+      allPlayer2Pokemon.map((p) => `${p.name} (${p.location}) - ${p.status}`)
+    );
+
+    // FIXED: Gruppiere nach Location - nehme das neueste Pokemon pro Location pro Spieler
+    allPlayer1Pokemon.forEach((pokemon: Pokemon) => {
+      if (!locationMap.has(pokemon.location)) {
+        locationMap.set(pokemon.location, {
+          location: pokemon.location,
+          player1Pokemon: null,
+          player2Pokemon: null,
+        });
+      }
+
+      const current = locationMap.get(pokemon.location)!;
+      // Überschreibe nur wenn noch kein Pokemon da ist oder das neue Pokemon neuer ist
+      if (
+        !current.player1Pokemon ||
+        new Date(pokemon.caughtAt) > new Date(current.player1Pokemon.caughtAt)
+      ) {
+        current.player1Pokemon = pokemon;
+      }
+    });
+
+    allPlayer2Pokemon.forEach((pokemon: Pokemon) => {
+      if (!locationMap.has(pokemon.location)) {
+        locationMap.set(pokemon.location, {
+          location: pokemon.location,
+          player1Pokemon: null,
+          player2Pokemon: null,
+        });
+      }
+
+      const current = locationMap.get(pokemon.location)!;
+      // Überschreibe nur wenn noch kein Pokemon da ist oder das neue Pokemon neuer ist
+      if (
+        !current.player2Pokemon ||
+        new Date(pokemon.caughtAt) > new Date(current.player2Pokemon.caughtAt)
+      ) {
+        current.player2Pokemon = pokemon;
+      }
+    });
+
+    // Konvertiere zu Array mit isComplete Flag
+    const result = Array.from(locationMap.values())
+      .filter((conn) => conn.player1Pokemon || conn.player2Pokemon)
+      .map((conn) => ({
+        ...conn,
+        isComplete: !!(conn.player1Pokemon && conn.player2Pokemon),
+      }))
+      .sort((a, b) => {
+        // Sortierung: Komplette Links zuerst, dann nach Status-Priorität
+        if (a.isComplete && !b.isComplete) return -1;
+        if (!a.isComplete && b.isComplete) return 1;
+
+        // Für komplette Links: Gefahr > Lebendig > Tot
+        if (a.isComplete && b.isComplete) {
+          const getStatusPriority = (conn) => {
+            const p1 = conn.player1Pokemon!;
+            const p2 = conn.player2Pokemon!;
+            const bothAlive = p1.status === "alive" && p2.status === "alive";
+            const bothDead = p1.status === "dead" && p2.status === "dead";
+            const onlyOneDead =
+              (p1.status === "dead") !== (p2.status === "dead");
+
+            if (onlyOneDead) return 0; // Gefahr - höchste Priorität
+            if (bothAlive) return 1; // Lebendig
+            if (bothDead) return 2; // Tot
+            return 3;
+          };
+
+          const priorityDiff = getStatusPriority(a) - getStatusPriority(b);
+          if (priorityDiff !== 0) return priorityDiff;
+        }
+
+        return a.location.localeCompare(b.location);
+      });
+
+    console.log(
+      "Final connections:",
+      result.map((c) => ({
+        location: c.location,
+        p1: c.player1Pokemon
+          ? `${c.player1Pokemon.name} (${c.player1Pokemon.status})`
+          : "none",
+        p2: c.player2Pokemon
+          ? `${c.player2Pokemon.name} (${c.player2Pokemon.status})`
+          : "none",
+        complete: c.isComplete,
+      }))
+    );
+
+    return result;
+  }, [data]);
+
+  // Filter und Sort Logic mit echten Daten
+  const filteredConnections = useMemo(() => {
+    let filtered = connections.filter((connection) => {
+      // Search by Pokemon name, nickname, or location
+      const searchLower = searchTerm.toLowerCase();
+      const p1 = connection.player1Pokemon;
+      const p2 = connection.player2Pokemon;
+
+      const p1Name = p1 ? (p1.nickname || p1.name).toLowerCase() : "";
+      const p2Name = p2 ? (p2.nickname || p2.name).toLowerCase() : "";
+      const location = connection.location.toLowerCase();
+
+      const matchesSearch =
+        p1Name.includes(searchLower) ||
+        p2Name.includes(searchLower) ||
+        location.includes(searchLower);
+
+      if (!matchesSearch) return false;
+
+      // Filter by status (nur für complete connections)
+      if (!connection.isComplete) {
+        return sortFilter === "all";
+      }
+
+      const bothAlive = p1!.status === "alive" && p2!.status === "alive";
+      const bothDead = p1!.status === "dead" && p2!.status === "dead";
+      const onlyOneDead = (p1!.status === "dead") !== (p2!.status === "dead");
+
+      switch (sortFilter) {
+        case "alive":
+          return bothAlive;
+        case "dead":
+          return bothDead;
+        case "danger":
+          return onlyOneDead;
+        default:
+          return true;
+      }
+    });
+
+    return filtered;
+  }, [connections, searchTerm, sortFilter]);
+
+  const getFilterCounts = () => {
+    let alive = 0,
+      dead = 0,
+      danger = 0,
+      incomplete = 0;
+
+    connections.forEach((conn) => {
+      if (!conn.isComplete) {
+        incomplete++;
+        return;
+      }
+
+      const p1 = conn.player1Pokemon!;
+      const p2 = conn.player2Pokemon!;
+      const bothAlive = p1.status === "alive" && p2.status === "alive";
+      const bothDead = p1.status === "dead" && p2.status === "dead";
+      const onlyOneDead = (p1.status === "dead") !== (p2.status === "dead");
+
+      if (onlyOneDead) danger++;
+      else if (bothAlive) alive++;
+      else if (bothDead) dead++;
+    });
+
+    return { alive, dead, danger, incomplete, total: connections.length };
+  };
+
+  const counts = getFilterCounts();
+
+  return (
+    <div className="space-y-6">
+      {/* Search and Filter Controls */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ChevronRight className="h-5 w-5 text-purple-500" />
+            Soullink Manager
+          </CardTitle>
+          <CardDescription>
+            Verwalte deine Pokémon Soullink Verbindungen - automatisch basierend
+            auf gleichen Locations
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Search Bar */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+            <Input
+              type="text"
+              placeholder="Suche nach Pokémon-Namen, Spitznamen oder Orten..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+
+          {/* Filter Buttons */}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant={sortFilter === "all" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setSortFilter("all")}
+            >
+              <Filter className="w-4 h-4 mr-1" />
+              Alle ({counts.total})
+            </Button>
+
+            {counts.danger > 0 && (
+              <Button
+                variant={sortFilter === "danger" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSortFilter("danger")}
+                className="border-yellow-300 text-yellow-700 hover:bg-yellow-50"
+              >
+                ⚠️ Gefahr ({counts.danger})
+              </Button>
+            )}
+
+            <Button
+              variant={sortFilter === "alive" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setSortFilter("alive")}
+              className="border-green-300 text-green-700 hover:bg-green-50"
+            >
+              💚 Aktive Links ({counts.alive})
+            </Button>
+
+            <Button
+              variant={sortFilter === "dead" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setSortFilter("dead")}
+              className="border-red-300 text-red-700 hover:bg-red-50"
+            >
+              💀 Tote Links ({counts.dead})
+            </Button>
+
+            {counts.incomplete > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-gray-300 text-gray-700 hover:bg-gray-50"
+              >
+                📍 Unvollständig ({counts.incomplete})
+              </Button>
+            )}
+          </div>
+
+          {/* Results Count */}
+          {searchTerm && (
+            <div className="text-sm text-muted-foreground">
+              {filteredConnections.length} Ergebnisse für "{searchTerm}"
+            </div>
+          )}
+
+          {/* Debug Info (entferne das später) */}
+          <details className="text-xs text-gray-500 border p-2 rounded">
+            <summary>Debug Info (klicken zum erweitern)</summary>
+            <pre className="mt-2 whitespace-pre-wrap">
+              {JSON.stringify(counts, null, 2)}
+            </pre>
+          </details>
+        </CardContent>
+      </Card>
+
+      {/* Soullink Cards */}
+      <div className="space-y-4">
+        {filteredConnections.length === 0 ? (
+          <Card>
+            <CardContent className="text-center py-12">
+              <Search className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+              <p className="text-lg font-medium text-muted-foreground">
+                {connections.length === 0
+                  ? "Keine Soullinks gefunden"
+                  : "Keine Verbindungen gefunden"}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {connections.length === 0
+                  ? "Beginne mit dem Fangen von Pokémon um Soullinks zu erstellen"
+                  : "Versuche einen anderen Suchbegriff oder Filter"}
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          filteredConnections.map((connection, index) => (
+            <LocationSoullinkCard
+              key={`${connection.location}-${index}`}
+              connection={connection}
+              player1Name={data.player1.name || "Player 1"}
+              player2Name={data.player2.name || "Player 2"}
+            />
+          ))
+        )}
+      </div>
+
+      {/* Statistics */}
+      {connections.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Statistiken</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="text-center p-4 bg-green-50 rounded-lg">
+                <div className="text-2xl font-bold text-green-600">
+                  {counts.alive}
+                </div>
+                <div className="text-sm text-green-700">Aktive Links</div>
+              </div>
+              <div className="text-center p-4 bg-red-50 rounded-lg">
+                <div className="text-2xl font-bold text-red-600">
+                  {counts.dead}
+                </div>
+                <div className="text-sm text-red-700">Tote Links</div>
+              </div>
+              {counts.danger > 0 && (
+                <div className="text-center p-4 bg-yellow-50 rounded-lg">
+                  <div className="text-2xl font-bold text-yellow-600">
+                    {counts.danger}
+                  </div>
+                  <div className="text-sm text-yellow-700">In Gefahr</div>
+                </div>
+              )}
+              <div className="text-center p-4 bg-gray-50 rounded-lg">
+                <div className="text-2xl font-bold text-gray-600">
+                  {counts.incomplete}
+                </div>
+                <div className="text-sm text-gray-700">Unvollständig</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
 // 5. KOMPONENTE: Potential Soullink Card
 function PotentialSoullinkCard({
   connection,

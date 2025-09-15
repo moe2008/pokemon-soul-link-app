@@ -16,13 +16,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Card, CardContent } from "@/components/ui/card"
 import { Settings, User } from "lucide-react"
 
-interface Player {
-  name: string
-  avatar: string
-  badges: number
-  alive: number
-  dead: number
-}
+import { Player } from "@/hooks/use-soullink-data"
 
 interface PlayerSetupDialogProps {
   player: Player

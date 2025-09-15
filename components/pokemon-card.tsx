@@ -14,25 +14,12 @@ import {
   Users,
 } from "lucide-react";
 
-// Type definitions
-interface Pokemon {
-  id: string;
-  name: string;
-  nickname?: string;
-  species: string;
-  level: number;
-  status: "alive" | "dead";
-  location: string;
-  caughtAt: string;
-  diedAt?: string;
-  cause?: string;
-  isInParty?: boolean;
-}
+import { Pokemon } from "@/hooks/use-soullink-data";
 
 interface PokemonCardProps {
   pokemon: Pokemon;
   onEdit?: () => void;
-  onDelete?: () => void;
+  onDelete?: (pokemonId: string) => void;
   onKill?: (pokemonId: string, cause?: string) => void;
   onRevive?: (pokemonId: string) => void;
   onToggleParty?: (pokemonId: string) => void;

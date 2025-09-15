@@ -1,0 +1,427 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useSoullinkData } from "./use-soullink-data";
+import Peer, { DataConnection } from "peerjs";
+import type { SoullinkData } from "./use-soullink-data";
+
+interface WebRTCMessage {
+  type: "data-update" | "player-update" | "badge-update" | "pokemon-action";
+  payload: any;
+  timestamp: number;
+  senderId: string;
+}
+
+interface RoomInfo {
+  id: string;
+  name: string;
+  hostId: string;
+  isHost: boolean;
+}
+
+export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
+  const [isConnected, setIsConnected] = useState(false);
+  const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
+  const [peerId, setPeerId] = useState<string>("");
+  const [connectionStatus, setConnectionStatus] = useState<
+    "disconnected" | "connecting" | "connected"
+  >("disconnected");
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+
+  const peer = useRef<Peer | null>(null);
+  const connection = useRef<DataConnection | null>(null);
+
+  // Hilfsfunktion um aktuelle Daten zu holen
+  const getCurrentData = useCallback(() => {
+    const saved = localStorage.getItem("pokemon-soullink-data");
+    return saved ? JSON.parse(saved) : {};
+  }, []);
+
+  // Initialize PeerJS
+  useEffect(() => {
+    const initPeer = () => {
+      const peerInstance = new Peer({
+        config: {
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:stun1.l.google.com:19302" },
+            { urls: "stun:stun.relay.metered.ca:80" },
+            {
+              urls: "turn:a.relay.metered.ca:80",
+              username: "82b86fb7ac9e006dd5831543",
+              credential: "uK5+zxQoJSaDmhzk",
+            },
+            {
+              urls: "turn:a.relay.metered.ca:80?transport=tcp",
+              username: "82b86fb7ac9e006dd5831543",
+              credential: "uK5+zxQoJSaDmhzk",
+            },
+            {
+              urls: "turn:a.relay.metered.ca:443",
+              username: "82b86fb7ac9e006dd5831543",
+              credential: "uK5+zxQoJSaDmhzk",
+            },
+            {
+              urls: "turn:a.relay.metered.ca:443?transport=tcp",
+              username: "82b86fb7ac9e006dd5831543",
+              credential: "uK5+zxQoJSaDmhzk",
+            },
+          ],
+        },
+      });
+
+      peerInstance.on("open", (id) => {
+        console.log("Peer connected with ID:", id);
+        setPeerId(id);
+      });
+
+      peerInstance.on("connection", (conn) => {
+        console.log("Incoming connection from:", conn.peer);
+        setupConnection(conn);
+      });
+
+      peerInstance.on("error", (err) => {
+        console.error("Peer error:", err);
+        setConnectionStatus("disconnected");
+      });
+
+      peer.current = peerInstance;
+    };
+
+    initPeer();
+
+    return () => {
+      if (peer.current) {
+        peer.current.destroy();
+      }
+    };
+  }, []);
+
+  // Setup data connection
+  const setupConnection = useCallback((conn: DataConnection) => {
+    connection.current = conn;
+    setConnectionStatus("connecting");
+
+    conn.on("open", () => {
+      console.log("Data connection opened");
+      setIsConnected(true);
+      setConnectionStatus("connected");
+    });
+
+    conn.on("data", (receivedData) => {
+      try {
+        const message = receivedData as WebRTCMessage;
+        console.log("Received message:", message.type, message.payload);
+        handleIncomingMessage(message);
+      } catch (error) {
+        console.error("Error parsing message:", error);
+      }
+    });
+
+    conn.on("close", () => {
+      console.log("Connection closed");
+      setIsConnected(false);
+      setConnectionStatus("disconnected");
+      connection.current = null;
+    });
+
+    conn.on("error", (err) => {
+      console.error("Connection error:", err);
+      setConnectionStatus("disconnected");
+    });
+  }, []);
+
+  // Handle incoming messages - FIXED: Always get fresh data
+  const handleIncomingMessage = useCallback(
+    (message: WebRTCMessage) => {
+      console.log("Processing received message:", message.type);
+
+      switch (message.type) {
+        case "data-update":
+          console.log("Importing full data update:", message.payload);
+          onImportData(message.payload);
+          setLastSyncTime(new Date());
+          break;
+
+        case "player-update":
+          const { playerKey, playerData } = message.payload;
+          console.log(`Updating ${playerKey} with:`, playerData);
+
+          // FIXED: Get fresh data each time
+          const currentData = getCurrentData();
+          const updatedData = {
+            ...currentData,
+            [playerKey]: playerData,
+          };
+          onImportData(updatedData);
+          break;
+
+        case "badge-update":
+          const {
+            badgeId,
+            playerKey: badgePlayerKey,
+            earned,
+          } = message.payload;
+          console.log(`Badge update: ${badgePlayerKey} ${badgeId} = ${earned}`);
+
+          // FIXED: Get fresh data each time
+          const currentBadgeData = getCurrentData();
+          const updatedBadgeData = { ...currentBadgeData };
+
+          if (!updatedBadgeData[badgePlayerKey]) {
+            console.error(`Player ${badgePlayerKey} not found in data`);
+            return;
+          }
+
+          updatedBadgeData[badgePlayerKey].earnedBadges[badgeId] = earned;
+          if (earned) {
+            updatedBadgeData[badgePlayerKey].badges++;
+          } else {
+            updatedBadgeData[badgePlayerKey].badges--;
+          }
+          onImportData(updatedBadgeData);
+          break;
+
+        case "pokemon-action":
+          handlePokemonAction(message.payload);
+          break;
+      }
+    },
+    [onImportData, getCurrentData] // Added getCurrentData as dependency
+  );
+
+  // Handle Pokemon actions - FIXED: Always get fresh data
+  const handlePokemonAction = useCallback(
+    (payload: any) => {
+      const { action, playerKey, pokemonData, pokemonId, cause } = payload;
+      console.log(`Pokemon action: ${action} for ${playerKey}`, {
+        pokemonData,
+        pokemonId,
+        cause,
+      });
+
+      // FIXED: Get fresh data each time
+      const currentData = getCurrentData();
+      const updatedData = { ...currentData };
+
+      if (!updatedData[playerKey]) {
+        console.error(`Player ${playerKey} not found in data`);
+        return;
+      }
+
+      switch (action) {
+        case "add":
+          const newPokemon = {
+            ...pokemonData,
+            id: `${playerKey}_${Date.now()}`,
+          };
+          updatedData[playerKey].team.push(newPokemon);
+          updatedData[playerKey].encounters[newPokemon.location] = newPokemon;
+          updatedData[playerKey].alive++;
+          break;
+
+        case "kill":
+          const pokemonIndex = updatedData[playerKey].team.findIndex(
+            (p: any) => p.id === pokemonId
+          );
+          if (pokemonIndex !== -1) {
+            const pokemon = updatedData[playerKey].team[pokemonIndex];
+            pokemon.status = "dead";
+            if (cause) pokemon.cause = cause;
+
+            updatedData[playerKey].team.splice(pokemonIndex, 1);
+            updatedData[playerKey].graveyard.push(pokemon);
+            updatedData[playerKey].alive--;
+            updatedData[playerKey].dead++;
+          }
+          break;
+
+        case "revive":
+          const graveyardIndex = updatedData[playerKey].graveyard.findIndex(
+            (p: any) => p.id === pokemonId
+          );
+          if (graveyardIndex !== -1) {
+            const pokemon = updatedData[playerKey].graveyard[graveyardIndex];
+            pokemon.status = "alive";
+            delete pokemon.cause;
+
+            updatedData[playerKey].graveyard.splice(graveyardIndex, 1);
+            updatedData[playerKey].team.push(pokemon);
+            updatedData[playerKey].alive++;
+            updatedData[playerKey].dead--;
+          }
+          break;
+      }
+
+      onImportData(updatedData);
+    },
+    [onImportData, getCurrentData] // Added getCurrentData as dependency
+  );
+
+  // Send message
+  const sendMessage = useCallback((message: WebRTCMessage) => {
+    if (connection.current && connection.current.open) {
+      console.log("Sending message:", message.type, message.payload);
+      connection.current.send(message);
+      return true;
+    } else {
+      console.warn("Cannot send message - connection not open");
+      return false;
+    }
+  }, []);
+
+  // Create room (Host)
+  const createRoom = useCallback(
+    async (roomName: string) => {
+      if (!peer.current || !peerId) return null;
+
+      setRoomInfo({
+        id: peerId,
+        name: roomName,
+        hostId: peerId,
+        isHost: true,
+      });
+
+      console.log(`Room created with ID: ${peerId}`);
+
+      return {
+        roomId: peerId,
+        offer: peerId,
+        isHost: true,
+      };
+    },
+    [peerId]
+  );
+
+  // Join room (Guest)
+  const joinRoom = useCallback(
+    async (roomId: string, hostPeerId: string) => {
+      if (!peer.current) return null;
+
+      setConnectionStatus("connecting");
+
+      try {
+        const conn = peer.current.connect(hostPeerId, {
+          reliable: true,
+        });
+
+        setupConnection(conn);
+
+        setRoomInfo({
+          id: hostPeerId,
+          name: "Joined Room",
+          hostId: hostPeerId,
+          isHost: false,
+        });
+
+        return "connecting";
+      } catch (error) {
+        console.error("Failed to connect:", error);
+        setConnectionStatus("disconnected");
+        throw error;
+      }
+    },
+    [setupConnection]
+  );
+
+  // Leave room
+  const leaveRoom = useCallback(() => {
+    if (connection.current) {
+      connection.current.close();
+      connection.current = null;
+    }
+
+    setIsConnected(false);
+    setRoomInfo(null);
+    setConnectionStatus("disconnected");
+  }, []);
+
+  // Sync functions - FIXED: Always get fresh data
+  const syncData = useCallback(() => {
+    // FIXED: Get fresh data from localStorage
+    const currentData = getCurrentData();
+
+    const message: WebRTCMessage = {
+      type: "data-update",
+      payload: currentData,
+      timestamp: Date.now(),
+      senderId: peerId,
+    };
+
+    const success = sendMessage(message);
+    if (success) {
+      setLastSyncTime(new Date());
+    }
+    return success;
+  }, [peerId, sendMessage, getCurrentData]);
+
+  // FIXED: Sync individual player with fresh data
+  const syncPlayerUpdate = useCallback(
+    (playerKey: "player1" | "player2", playerData?: any) => {
+      // If no playerData provided, get fresh data
+      const freshData = playerData || getCurrentData()[playerKey];
+
+      const message: WebRTCMessage = {
+        type: "player-update",
+        payload: { playerKey, playerData: freshData },
+        timestamp: Date.now(),
+        senderId: peerId,
+      };
+
+      return sendMessage(message);
+    },
+    [peerId, sendMessage, getCurrentData]
+  );
+
+  const syncBadgeUpdate = useCallback(
+    (playerKey: "player1" | "player2", badgeId: string, earned: boolean) => {
+      const message: WebRTCMessage = {
+        type: "badge-update",
+        payload: { playerKey, badgeId, earned },
+        timestamp: Date.now(),
+        senderId: peerId,
+      };
+
+      return sendMessage(message);
+    },
+    [peerId, sendMessage]
+  );
+
+  const syncPokemonAction = useCallback(
+    (
+      action: string,
+      playerKey: "player1" | "player2",
+      pokemonData?: any,
+      pokemonId?: string,
+      cause?: string
+    ) => {
+      const message: WebRTCMessage = {
+        type: "pokemon-action",
+        payload: { action, playerKey, pokemonData, pokemonId, cause },
+        timestamp: Date.now(),
+        senderId: peerId,
+      };
+
+      return sendMessage(message);
+    },
+    [peerId, sendMessage]
+  );
+
+  return {
+    // Connection State
+    isConnected,
+    connectionStatus,
+    roomInfo,
+    peerId,
+    lastSyncTime,
+
+    // Room Management
+    createRoom,
+    joinRoom,
+    leaveRoom,
+
+    // Data Sync
+    syncData,
+    syncPlayerUpdate,
+    syncBadgeUpdate,
+    syncPokemonAction,
+  };
+}
