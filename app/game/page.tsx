@@ -2,6 +2,23 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Crown,
+  UserPlus,
+  User,
+  RefreshCw,
+  Trash2,
+  RotateCcw,
+  AlertCircle,
+  CheckCircle,
+  Clock,
+} from "lucide-react";
 
 interface MousePosition {
   x: number;
@@ -14,6 +31,13 @@ interface WebRTCRoom {
   hostName: string;
   created: Date;
   peerId: string;
+}
+
+interface StoredConnectionData {
+  role: "host" | "guest";
+  roomData?: any;
+  joinCode?: string;
+  hostName?: string;
 }
 
 export default function PokemonSoullinkLanding() {
@@ -31,6 +55,9 @@ export default function PokemonSoullinkLanding() {
   const [createdRoom, setCreatedRoom] = useState<WebRTCRoom | null>(null);
   const [isCreating, setIsCreating] = useState<boolean>(false);
   const [isJoining, setIsJoining] = useState<boolean>(false);
+  const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
+  const [storedConnectionData, setStoredConnectionData] =
+    useState<StoredConnectionData | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Floating orbs für visuelle Effekte
@@ -107,20 +134,43 @@ export default function PokemonSoullinkLanding() {
     return () => window.removeEventListener("mousemove", handleMouseMove);
   }, []);
 
-  // Check for existing room data on mount
+  // Check for stored connection data on mount
   useEffect(() => {
-    // Check if user is already in a room and redirect
-    const existingRoom = localStorage.getItem("webrtc_room");
-    const existingRole = localStorage.getItem("webrtc_role");
+    const storedRole = localStorage.getItem("webrtc_role");
+    const storedRoom = localStorage.getItem("webrtc_room");
+    const storedJoinCode = localStorage.getItem("webrtc_join_code");
+    const storedHostName = localStorage.getItem("webrtc_host_name");
 
-    if (existingRoom && existingRole) {
-      // User already has a room setup, redirect to dashboard
-      router.push("/");
+    if (storedRole && (storedRoom || storedJoinCode)) {
+      let connectionData: StoredConnectionData = {
+        role: storedRole as "host" | "guest",
+      };
+
+      if (storedRole === "host" && storedRoom) {
+        try {
+          connectionData.roomData = JSON.parse(storedRoom);
+          connectionData.hostName = storedHostName || "";
+          setHostName(storedHostName || "");
+        } catch (error) {
+          console.error("Failed to parse stored room data:", error);
+          // Clear invalid data
+          handleClearStoredData();
+          return;
+        }
+      } else if (storedRole === "guest" && storedJoinCode) {
+        connectionData.joinCode = storedJoinCode;
+        setJoinCode(storedJoinCode);
+      }
+
+      setStoredConnectionData(connectionData);
     }
-  }, [router]);
+  }, []);
 
   const handleCreateRoom = async (): Promise<void> => {
-    if (!roomName.trim() || !hostName.trim()) return;
+    if (!roomName.trim() || !hostName.trim()) {
+      alert("Please fill in all fields");
+      return;
+    }
 
     setIsCreating(true);
 
@@ -158,7 +208,10 @@ export default function PokemonSoullinkLanding() {
   };
 
   const handleJoinRoom = async (): Promise<void> => {
-    if (!joinCode.trim()) return;
+    if (!joinCode.trim()) {
+      alert("Please enter a room code");
+      return;
+    }
 
     setIsJoining(true);
 
@@ -196,6 +249,39 @@ export default function PokemonSoullinkLanding() {
     }
   };
 
+  const handleReconnect = async (): Promise<void> => {
+    if (!storedConnectionData) return;
+
+    setIsReconnecting(true);
+
+    try {
+      // Redirect to dashboard where the WebRTC hook will handle reconnection
+      router.push("/");
+    } catch (error) {
+      console.error("Reconnection failed:", error);
+      alert("Reconnection failed");
+    } finally {
+      setIsReconnecting(false);
+    }
+  };
+
+  const handleClearStoredData = (): void => {
+    localStorage.removeItem("webrtc_room");
+    localStorage.removeItem("webrtc_role");
+    localStorage.removeItem("webrtc_join_code");
+    localStorage.removeItem("webrtc_host_name");
+    localStorage.removeItem("webrtc_join_data");
+
+    // Reset local state
+    setStoredConnectionData(null);
+    setRoomName("");
+    setHostName("");
+    setJoinCode("");
+    setCreatedRoom(null);
+
+    alert("Stored connection data cleared");
+  };
+
   const copyToClipboard = async (text: string): Promise<void> => {
     try {
       await navigator.clipboard.writeText(text);
@@ -208,6 +294,24 @@ export default function PokemonSoullinkLanding() {
 
   const goToDashboard = () => {
     router.push("/");
+  };
+
+  const getStoredDataDescription = () => {
+    if (!storedConnectionData) return "";
+
+    if (storedConnectionData.role === "host" && storedConnectionData.roomData) {
+      return `Host room: "${storedConnectionData.roomData.name}"`;
+    } else if (
+      storedConnectionData.role === "guest" &&
+      storedConnectionData.joinCode
+    ) {
+      return `Guest connection with code: ${storedConnectionData.joinCode.slice(
+        0,
+        20
+      )}...`;
+    }
+
+    return "Previous connection data";
   };
 
   return (
@@ -271,6 +375,54 @@ export default function PokemonSoullinkLanding() {
           Connect your destinies • Real-time collaboration
         </p>
 
+        {/* Stored Connection Data Alert */}
+        {storedConnectionData && !createdRoom && (
+          <div className="mb-8 max-w-md w-full">
+            <Alert className="bg-emerald-900/40 border-emerald-500/30">
+              <AlertCircle className="h-4 w-4 text-emerald-400" />
+              <AlertDescription>
+                <div className="space-y-3">
+                  <p className="text-emerald-100 font-medium">
+                    Previous connection found
+                  </p>
+                  <p className="text-sm text-emerald-200/80">
+                    {getStoredDataDescription()}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleReconnect}
+                      disabled={isReconnecting}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                      size="sm"
+                    >
+                      {isReconnecting ? (
+                        <>
+                          <RefreshCw className="h-3 w-3 mr-2 animate-spin" />
+                          Reconnecting...
+                        </>
+                      ) : (
+                        <>
+                          <RotateCcw className="h-3 w-3 mr-2" />
+                          Reconnect
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      onClick={handleClearStoredData}
+                      variant="outline"
+                      size="sm"
+                      className="border-red-500/50 text-red-400 hover:bg-red-900/20 hover:border-red-500"
+                    >
+                      <Trash2 className="h-3 w-3 mr-2" />
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row gap-4 mb-8">
           {/* Create Game Button */}
@@ -292,21 +444,11 @@ export default function PokemonSoullinkLanding() {
             </div>
             <span className="relative z-10 flex items-center gap-3">
               {isCreating ? "CREATING..." : "CREATE ROOM"}
-              <svg
+              <Crown
                 className={`w-6 h-6 transition-transform duration-300 group-hover:translate-x-1 ${
                   isCreating ? "animate-spin" : ""
                 }`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 4v16m8-8H4"
-                />
-              </svg>
+              />
             </span>
           </button>
 
@@ -319,21 +461,11 @@ export default function PokemonSoullinkLanding() {
             <div className="absolute inset-0 bg-gradient-to-r from-purple-500 via-blue-500 to-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
             <span className="relative z-10 flex items-center gap-3">
               {isJoining ? "JOINING..." : "JOIN ROOM"}
-              <svg
+              <UserPlus
                 className={`w-6 h-6 transition-transform duration-300 group-hover:translate-x-1 ${
                   isJoining ? "animate-spin" : ""
                 }`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"
-                />
-              </svg>
+              />
             </span>
           </button>
 
@@ -345,19 +477,7 @@ export default function PokemonSoullinkLanding() {
             <div className="absolute inset-0 bg-gradient-to-r from-gray-500 via-slate-500 to-gray-500 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
             <span className="relative z-10 flex items-center gap-3">
               SOLO MODE
-              <svg
-                className="w-6 h-6 transition-transform duration-300 group-hover:translate-x-1"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-                />
-              </svg>
+              <User className="w-6 h-6 transition-transform duration-300 group-hover:translate-x-1" />
             </span>
           </button>
         </div>
@@ -420,10 +540,10 @@ export default function PokemonSoullinkLanding() {
             </h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
+                <Label className="block text-sm font-medium text-gray-300 mb-2">
                   Room Name
-                </label>
-                <input
+                </Label>
+                <Input
                   type="text"
                   value={roomName}
                   onChange={(e) => setRoomName(e.target.value)}
@@ -432,10 +552,10 @@ export default function PokemonSoullinkLanding() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
+                <Label className="block text-sm font-medium text-gray-300 mb-2">
                   Your Name
-                </label>
-                <input
+                </Label>
+                <Input
                   type="text"
                   value={hostName}
                   onChange={(e) => setHostName(e.target.value)}
@@ -444,20 +564,31 @@ export default function PokemonSoullinkLanding() {
                 />
               </div>
               <div className="flex gap-3 pt-4">
-                <button
+                <Button
                   onClick={handleCreateRoom}
                   disabled={!roomName.trim() || !hostName.trim() || isCreating}
                   className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  {isCreating ? "Creating..." : "Create Room"}
-                </button>
-                <button
+                  {isCreating ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Crown className="h-4 w-4 mr-2" />
+                      Create Room
+                    </>
+                  )}
+                </Button>
+                <Button
                   onClick={() => setShowCreateDialog(false)}
                   disabled={isCreating}
+                  variant="outline"
                   className="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -471,10 +602,10 @@ export default function PokemonSoullinkLanding() {
             <h3 className="text-2xl font-bold text-white mb-4">Join Room</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
+                <Label className="block text-sm font-medium text-gray-300 mb-2">
                   Room Code
-                </label>
-                <textarea
+                </Label>
+                <Textarea
                   value={joinCode}
                   onChange={(e) => setJoinCode(e.target.value)}
                   placeholder="Paste the room code here..."
@@ -486,20 +617,31 @@ export default function PokemonSoullinkLanding() {
                 </p>
               </div>
               <div className="flex gap-3 pt-4">
-                <button
+                <Button
                   onClick={handleJoinRoom}
                   disabled={!joinCode.trim() || isJoining}
                   className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  {isJoining ? "Joining..." : "Join Room"}
-                </button>
-                <button
+                  {isJoining ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Joining...
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="h-4 w-4 mr-2" />
+                      Join Room
+                    </>
+                  )}
+                </Button>
+                <Button
                   onClick={() => setShowJoinDialog(false)}
                   disabled={isJoining}
+                  variant="outline"
                   className="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           </div>

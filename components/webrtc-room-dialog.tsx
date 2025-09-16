@@ -24,7 +24,6 @@ import {
   UserPlus,
   Crown,
   Users,
-  AlertCircle,
   CheckCircle,
   Clock,
   RefreshCw,
@@ -39,6 +38,7 @@ type WebRTCRoomDialogProps = {
   children: React.ReactNode;
   webrtc: ReturnType<typeof useWebRTCSoullink>;
 };
+
 // WebRTC Room Dialog Component
 export function WebRTCRoomDialog({ children, webrtc }: WebRTCRoomDialogProps) {
   const {
@@ -58,31 +58,15 @@ export function WebRTCRoomDialog({ children, webrtc }: WebRTCRoomDialogProps) {
   const [shareableLink, setShareableLink] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
-  const [showFullCode, setShowFullCode] = useState(false);
   const [copiedStates, setCopiedStates] = useState<{ [key: string]: boolean }>(
     {}
   );
 
-  // Check for stored room data on component mount
+  // Check for stored room data on component mount - but don't auto-fill
   useEffect(() => {
-    const storedRoom = localStorage.getItem("webrtc_room");
-    const storedRole = localStorage.getItem("webrtc_role");
-    const storedJoinCode = localStorage.getItem("webrtc_join_code");
-
-    if (storedRoom && storedRole === "host") {
-      try {
-        const roomData = JSON.parse(storedRoom);
-        setRoomName(roomData.name);
-        setHostName(roomData.hostName);
-        // Auto-create room if we're the host
-        createRoom(roomData.name);
-      } catch (error) {
-        console.error("Failed to parse stored room data:", error);
-      }
-    } else if (storedJoinCode && storedRole === "guest") {
-      setJoinCode(storedJoinCode);
-      // Auto-join if we have a join code
-      handleJoinRoom(storedJoinCode);
+    const storedHostName = localStorage.getItem("webrtc_host_name");
+    if (storedHostName) {
+      setHostName(storedHostName);
     }
   }, []);
 
@@ -110,18 +94,7 @@ export function WebRTCRoomDialog({ children, webrtc }: WebRTCRoomDialogProps) {
     try {
       const result = await createRoom(roomName);
       if (result) {
-        // Store room data for persistence
-        const roomData = {
-          id: result.roomId,
-          name: roomName,
-          hostName: hostName,
-          created: new Date(),
-          offer: result.offer,
-        };
-        localStorage.setItem("webrtc_room", JSON.stringify(roomData));
-        localStorage.setItem("webrtc_role", "host");
         localStorage.setItem("webrtc_host_name", hostName);
-
         toast.success("Room created successfully!");
         setIsOpen(false);
       }
@@ -158,15 +131,12 @@ export function WebRTCRoomDialog({ children, webrtc }: WebRTCRoomDialogProps) {
 
       const result = await joinRoom(roomId, hostPeerId);
       if (result) {
-        localStorage.setItem("webrtc_join_code", codeToUse);
-        localStorage.setItem("webrtc_role", "guest");
-
         toast.success("Connecting to room...");
         setIsOpen(false);
       }
     } catch (error) {
       console.error("Failed to join room:", error);
-      toast.error("Failed to join room");
+      toast.error("Failed to join room. Check if the host is online.");
     } finally {
       setIsJoining(false);
     }
@@ -174,10 +144,6 @@ export function WebRTCRoomDialog({ children, webrtc }: WebRTCRoomDialogProps) {
 
   const handleLeaveRoom = () => {
     leaveRoom();
-    localStorage.removeItem("webrtc_room");
-    localStorage.removeItem("webrtc_role");
-    localStorage.removeItem("webrtc_join_code");
-    localStorage.removeItem("webrtc_host_name");
     setShareableLink("");
     toast.success("Left room");
   };
@@ -226,6 +192,18 @@ export function WebRTCRoomDialog({ children, webrtc }: WebRTCRoomDialogProps) {
       default:
         return <WifiOff className="h-4 w-4" />;
     }
+  };
+
+  // Check if there's stored data for reconnection
+  const hasStoredData = () => {
+    const storedRole = localStorage.getItem("webrtc_role");
+    const storedRoom = localStorage.getItem("webrtc_room");
+    const storedJoinCode = localStorage.getItem("webrtc_join_code");
+
+    return (
+      (storedRole === "host" && storedRoom) ||
+      (storedRole === "guest" && storedJoinCode)
+    );
   };
 
   return (
@@ -547,9 +525,12 @@ function RoomManagement({
 }
 
 // WebRTC Status Indicator Component
-export function WebRTCStatusIndicator() {
-  const { isConnected, connectionStatus, roomInfo, peerId } =
-    useWebRTCSoullink();
+export function WebRTCStatusIndicator({
+  webrtc,
+}: {
+  webrtc: ReturnType<typeof useWebRTCSoullink>;
+}) {
+  const { isConnected, connectionStatus, roomInfo, peerId } = webrtc;
 
   if (!roomInfo) return null;
 
