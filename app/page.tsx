@@ -26,6 +26,8 @@ import {
   MapPin,
   RotateCcw,
   Search,
+  Plus,
+  UserPlus,
 } from "lucide-react";
 import { PlayerSetupDialog } from "@/components/player-setup-dialog";
 import { AddEncounterDialog } from "@/components/add-encounter-dialog";
@@ -68,13 +70,14 @@ export interface Badge {
 }
 
 type GameKey = "soulsilver" | "firered" | "ruby" | "diamond" | "black";
+type PlayerKey = "player1" | "player2" | "player3";
 
 const GAME_CATALOG: Record<
   GameKey,
   {
     title: string;
     subtitle: string;
-    cover: string; // Bild-URL (lokal in /public/images/games/... oder extern)
+    cover: string;
     locations: string[];
     badgeSections: { title: string; badges: Badge[] }[];
   }
@@ -148,16 +151,12 @@ function GameCard({
       }`}
     >
       <div className="relative h-44 w-full">
-        {/* Cover */}
         <div
           className="absolute inset-0 bg-center bg-cover"
           style={{ backgroundImage: `url(${cover})` }}
         />
-        {/* Glow Overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-        {/* Accent Blur */}
         <div className="absolute -inset-10 opacity-0 group-hover:opacity-100 blur-2xl transition-opacity duration-500 bg-[radial-gradient(ellipse_at_center,theme(colors.primary/30),transparent_60%)]" />
-        {/* Content */}
         <div className="absolute bottom-4 left-4 right-4">
           <div className="flex items-center gap-2">
             <span className="inline-flex h-2 w-2 rounded-full bg-primary animate-pulse" />
@@ -170,6 +169,33 @@ function GameCard({
         </div>
       </div>
     </button>
+  );
+}
+
+// NEW: Add Player Card Component
+function AddPlayerCard({ onAddPlayer }: { onAddPlayer: () => void }) {
+  return (
+    <Card className="transition-all duration-300 hover:shadow-lg border-2 border-dashed border-gray-300 hover:border-primary">
+      <CardContent className="flex flex-col items-center justify-center p-8 text-center space-y-4">
+        <div className="w-16 h-16 rounded-full bg-gray-100 border-2 border-dashed border-gray-300 flex items-center justify-center">
+          <UserPlus className="h-8 w-8 text-gray-400" />
+        </div>
+        <div>
+          <h3 className="font-semibold text-gray-700">Add Player</h3>
+          <p className="text-sm text-gray-500 mt-1">
+            Add a third player to your Soullink challenge
+          </p>
+        </div>
+        <Button
+          onClick={onAddPlayer}
+          variant="outline"
+          className="flex items-center gap-2"
+        >
+          <Plus className="h-4 w-4" />
+          Add Player 3
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -186,6 +212,8 @@ export default function PokemonSoullink() {
     importData,
     resetData,
     toggleParty,
+    addPlayer, // NEW: Assume this function exists in the hook
+    removePlayer, // NEW: Assume this function exists in the hook
   } = useSoullinkData();
 
   const webrtc = useWebRTCSoullink(importData);
@@ -199,13 +227,18 @@ export default function PokemonSoullink() {
     syncPokemonAction,
   } = webrtc;
 
-  const [activePlayer, setActivePlayer] = useState<"player1" | "player2">(
-    "player1"
-  );
+  const [activePlayer, setActivePlayer] = useState<PlayerKey>("player1");
+
+  // NEW: Track active players
+  const activePlayers = useMemo(() => {
+    return (Object.keys(data) as PlayerKey[]).filter(
+      (key) => key.startsWith("player") && data[key]
+    );
+  }, [data]);
 
   // Berechne Party Count
   const partyCount = useMemo(() => {
-    return data[activePlayer].team.filter((p) => p.isInParty).length;
+    return data[activePlayer]?.team?.filter((p) => p.isInParty).length || 0;
   }, [data, activePlayer]);
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -235,16 +268,29 @@ export default function PokemonSoullink() {
     );
   }
 
-  const handlePlayerUpdate = (
-    playerKey: "player1" | "player2",
-    player: Player
-  ) => {
+  // NEW: Handle adding player 3
+  const handleAddPlayer = () => {
+    if (activePlayers.length < 3) {
+      addPlayer("player3", {
+        name: "",
+        avatar: "",
+        badges: 0,
+        alive: 0,
+        dead: 0,
+        team: [],
+        graveyard: [],
+        encounters: {},
+        earnedBadges: {},
+      });
+    }
+  };
+
+  const handlePlayerUpdate = (playerKey: PlayerKey, player: Player) => {
     updatePlayer(playerKey, player);
 
-    // FIXED: Wait for state update and sync fresh data
     setTimeout(() => {
       if (isConnected) {
-        syncPlayerUpdate(playerKey); // No need to pass stale data
+        syncPlayerUpdate(playerKey);
       }
     }, 100);
   };
@@ -252,7 +298,6 @@ export default function PokemonSoullink() {
   const handleAddPokemon = (pokemon: Omit<Pokemon, "id">) => {
     const newPokemon = addPokemon(activePlayer, pokemon);
 
-    // FIXED: Sync fresh data after state update
     setTimeout(() => {
       if (isConnected) {
         syncPokemonAction("add", activePlayer, pokemon);
@@ -263,7 +308,6 @@ export default function PokemonSoullink() {
   const handleKillPokemon = (pokemonId: string, cause?: string) => {
     killPokemon(activePlayer, pokemonId, cause);
 
-    // FIXED: Sync fresh data after state update
     setTimeout(() => {
       if (isConnected) {
         syncPokemonAction("kill", activePlayer, undefined, pokemonId, cause);
@@ -274,7 +318,6 @@ export default function PokemonSoullink() {
   const handleRevivePokemon = (pokemonId: string) => {
     revivePokemon(activePlayer, pokemonId);
 
-    // FIXED: Sync fresh data after state update
     setTimeout(() => {
       if (isConnected) {
         syncPokemonAction("revive", activePlayer, undefined, pokemonId);
@@ -285,7 +328,6 @@ export default function PokemonSoullink() {
   const handleDeletePokemon = (pokemonId: string) => {
     deletePokemon(activePlayer, pokemonId);
 
-    // FIXED: Sync fresh data after state update
     setTimeout(() => {
       if (isConnected) {
         syncPokemonAction("delete", activePlayer, undefined, pokemonId);
@@ -293,14 +335,10 @@ export default function PokemonSoullink() {
     }, 100);
   };
 
-  const handleToggleBadge = (
-    badgeId: string,
-    playerKey: "player1" | "player2"
-  ) => {
-    const wasEarned = data[playerKey].earnedBadges[badgeId] || false;
+  const handleToggleBadge = (badgeId: string, playerKey: PlayerKey) => {
+    const wasEarned = data[playerKey]?.earnedBadges[badgeId] || false;
     toggleBadge(playerKey, badgeId);
 
-    // FIXED: Sync fresh data after state update
     setTimeout(() => {
       if (isConnected) {
         syncBadgeUpdate(playerKey, badgeId, !wasEarned);
@@ -311,38 +349,36 @@ export default function PokemonSoullink() {
   const handleToggleParty = (pokemonId: string) => {
     toggleParty(activePlayer, pokemonId);
 
-    // FIXED: Sync fresh data after state update
     setTimeout(() => {
       if (isConnected) {
-        syncPlayerUpdate(activePlayer); // Will get fresh data automatically
+        syncPlayerUpdate(activePlayer);
       }
     }, 100);
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-slate-900 dark:to-slate-800">
-      <div className="container mx-auto p-6 space-y-8">
+      <div className="container mx-auto p-4 md:p-6 space-y-6 md:space-y-8">
         {/* Header */}
         <div className="text-center space-y-4">
           <div className="flex items-center justify-center gap-2">
             <div className="flex items-center justify-center gap-2">
               <Pokeball size={36} className="animate-bounce" />
-              <h1 className="text-4xl font-bold text-balance bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              <h1 className="text-3xl md:text-4xl font-bold text-balance bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
                 Pokemon Soullink Dashboard
               </h1>
               <Pokeball size={36} className="animate-bounce" delay={300} />
             </div>
           </div>
-          <div className="flex items-center justify-center gap-4 flex-wrap">
+          <div className="flex flex-col md:flex-row items-center justify-center gap-4 flex-wrap">
             <p className="text-muted-foreground text-lg">
-              Track your epic Soullink challenge with your friend
+              Track your epic Soullink challenge with your friends
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap justify-center">
               <SoullinkRulesDialog />
               <SoullinkTutorialDialog />
               <SyncDialog data={data} onImportData={importData} />
 
-              {/* WebRTC Controls */}
               <WebRTCRoomDialog webrtc={webrtc}>
                 <Button
                   variant="outline"
@@ -394,6 +430,7 @@ export default function PokemonSoullink() {
             </div>
           )}
         </div>
+
         {/* Spielauswahl */}
         <Card className="border-none shadow-none bg-transparent">
           <CardHeader className="pb-2">
@@ -418,11 +455,11 @@ export default function PokemonSoullink() {
           </CardContent>
         </Card>
 
-        {/* Player Stats Overview */}
-        <div className="grid md:grid-cols-2 gap-6">
-          {Object.entries(data)
-            .filter(([key]) => key.startsWith("player"))
-            .map(([key, player]) => (
+        {/* UPDATED: Player Stats Overview with 3-player support */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+          {activePlayers.map((key) => {
+            const player = data[key];
+            return (
               <Card
                 key={key}
                 className={`transition-all duration-300 hover:shadow-lg ${
@@ -431,31 +468,31 @@ export default function PokemonSoullink() {
               >
                 <CardHeader className="pb-3">
                   <div className="flex items-center gap-3">
-                    <Avatar className="h-12 w-12">
+                    <Avatar className="h-10 w-10 md:h-12 md:w-12">
                       <AvatarImage
                         src={player.avatar || "/placeholder.svg"}
                         alt={player.name}
                       />
-                      <AvatarFallback>{player.name[0]}</AvatarFallback>
+                      <AvatarFallback>
+                        {player.name?.[0] || key.slice(-1)}
+                      </AvatarFallback>
                     </Avatar>
-                    <div className="flex-1">
-                      <CardTitle className="text-xl">
+                    <div className="flex-1 min-w-0">
+                      <CardTitle className="text-lg md:text-xl truncate">
                         {player.name || `Player ${key.slice(-1)}`}
                       </CardTitle>
                       <CardDescription>Trainer</CardDescription>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-shrink-0">
                       <PlayerSetupDialog
                         player={player}
-                        playerKey={key as "player1" | "player2"}
+                        playerKey={key}
                         onPlayerUpdate={handlePlayerUpdate}
                       />
                       <Button
                         variant={activePlayer === key ? "default" : "outline"}
                         size="sm"
-                        onClick={() =>
-                          setActivePlayer(key as "player1" | "player2")
-                        }
+                        onClick={() => setActivePlayer(key)}
                       >
                         {activePlayer === key ? "Active" : "Switch"}
                       </Button>
@@ -463,11 +500,11 @@ export default function PokemonSoullink() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-3 gap-4 text-center">
+                  <div className="grid grid-cols-3 gap-2 md:gap-4 text-center">
                     <div className="space-y-1">
                       <div className="flex items-center justify-center gap-1">
-                        <Trophy className="h-4 w-4 text-yellow-500" />
-                        <span className="text-2xl font-bold">
+                        <Trophy className="h-3 w-3 md:h-4 md:w-4 text-yellow-500" />
+                        <span className="text-xl md:text-2xl font-bold">
                           {player.badges}
                         </span>
                       </div>
@@ -475,8 +512,8 @@ export default function PokemonSoullink() {
                     </div>
                     <div className="space-y-1">
                       <div className="flex items-center justify-center gap-1">
-                        <Heart className="h-4 w-4 text-green-500" />
-                        <span className="text-2xl font-bold text-green-600">
+                        <Heart className="h-3 w-3 md:h-4 md:w-4 text-green-500" />
+                        <span className="text-xl md:text-2xl font-bold text-green-600">
                           {player.alive}
                         </span>
                       </div>
@@ -484,8 +521,8 @@ export default function PokemonSoullink() {
                     </div>
                     <div className="space-y-1">
                       <div className="flex items-center justify-center gap-1">
-                        <Skull className="h-4 w-4 text-red-500" />
-                        <span className="text-2xl font-bold text-red-600">
+                        <Skull className="h-3 w-3 md:h-4 md:w-4 text-red-500" />
+                        <span className="text-xl md:text-2xl font-bold text-red-600">
                           {player.dead}
                         </span>
                       </div>
@@ -498,14 +535,19 @@ export default function PokemonSoullink() {
                     className="h-2"
                   />
 
-                  {/* STARTER TEAM ANZEIGE */}
                   <StarterTeamDisplay
                     starterTeam={player.team.filter((p) => p.isInParty)}
                     playerName={player.name || `Player ${key.slice(-1)}`}
                   />
                 </CardContent>
               </Card>
-            ))}
+            );
+          })}
+
+          {/* NEW: Add Player Card (only show if less than 3 players) */}
+          {activePlayers.length < 3 && (
+            <AddPlayerCard onAddPlayer={handleAddPlayer} />
+          )}
         </div>
 
         {/* Sync Status */}
@@ -522,37 +564,54 @@ export default function PokemonSoullink() {
           </Card>
         )}
 
-        {/* Main Content Tabs */}
-        <Tabs defaultValue="encounters" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5">
-            {" "}
-            {/* Von 4 auf 5 ändern */}
-            <TabsTrigger value="encounters" className="flex items-center gap-2">
-              <Zap className="h-4 w-4" />
-              Encounters
-            </TabsTrigger>
-            <TabsTrigger value="team" className="flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              Team
-            </TabsTrigger>
-            <TabsTrigger value="soullinks" className="flex items-center gap-2">
-              {" "}
-              {/* NEU */}
-              <ChevronRight className="h-4 w-4" />
-              Soullinks
-            </TabsTrigger>
-            <TabsTrigger value="badges" className="flex items-center gap-2">
-              <Trophy className="h-4 w-4" />
-              Badges
-            </TabsTrigger>
-            <TabsTrigger value="graveyard" className="flex items-center gap-2">
-              <Skull className="h-4 w-4" />
-              Graveyard
-            </TabsTrigger>
-          </TabsList>
+        {/* UPDATED: Mobile-optimized Main Content Tabs */}
+        <Tabs defaultValue="encounters" className="space-y-4 md:space-y-6">
+          <div className="overflow-x-auto">
+            <TabsList className="grid w-full grid-cols-5 min-w-[500px] md:min-w-0">
+              <TabsTrigger
+                value="encounters"
+                className="flex flex-col md:flex-row items-center gap-1 md:gap-2 text-xs md:text-sm p-2 md:p-3"
+              >
+                <Zap className="h-3 w-3 md:h-4 md:w-4" />
+                <span className="hidden sm:inline">Encounters</span>
+                <span className="sm:hidden">Enc</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="team"
+                className="flex flex-col md:flex-row items-center gap-1 md:gap-2 text-xs md:text-sm p-2 md:p-3"
+              >
+                <Users className="h-3 w-3 md:h-4 md:w-4" />
+                <span className="hidden sm:inline">Team</span>
+                <span className="sm:hidden">Team</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="soullinks"
+                className="flex flex-col md:flex-row items-center gap-1 md:gap-2 text-xs md:text-sm p-2 md:p-3"
+              >
+                <ChevronRight className="h-3 w-3 md:h-4 md:w-4" />
+                <span className="hidden sm:inline">Soullinks</span>
+                <span className="sm:hidden">Links</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="badges"
+                className="flex flex-col md:flex-row items-center gap-1 md:gap-2 text-xs md:text-sm p-2 md:p-3"
+              >
+                <Trophy className="h-3 w-3 md:h-4 md:w-4" />
+                <span className="hidden sm:inline">Badges</span>
+                <span className="sm:hidden">Badge</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="graveyard"
+                className="flex flex-col md:flex-row items-center gap-1 md:gap-2 text-xs md:text-sm p-2 md:p-3"
+              >
+                <Skull className="h-3 w-3 md:h-4 md:w-4" />
+                <span className="hidden sm:inline">Graveyard</span>
+                <span className="sm:hidden">Grave</span>
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="soullinks" className="space-y-4">
-            {/* NEU */}
             <SoullinkManager data={data} />
           </TabsContent>
 
@@ -560,10 +619,10 @@ export default function PokemonSoullink() {
           <TabsContent value="encounters" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MapPin className="h-5 w-5" />
+                <CardTitle className="flex items-center gap-2 text-lg md:text-xl">
+                  <MapPin className="h-4 w-4 md:h-5 md:w-5" />
                   Route Encounters – {catalog.title} –{" "}
-                  {data[activePlayer].name ||
+                  {data[activePlayer]?.name ||
                     `Player ${activePlayer.slice(-1)}`}
                 </CardTitle>
                 <CardDescription>
@@ -585,19 +644,19 @@ export default function PokemonSoullink() {
               <CardContent>
                 <div className="grid gap-4 max-h-96 overflow-y-auto">
                   {filteredLocations.map((location) => {
-                    const encounter = data[activePlayer].encounters[location];
+                    const encounter = data[activePlayer]?.encounters[location];
                     return (
                       <div
                         key={location}
-                        className="flex items-center justify-between p-4 border rounded-lg"
+                        className="flex items-center justify-between p-3 md:p-4 border rounded-lg"
                       >
                         <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center">
-                            <MapPin className="h-6 w-6 text-muted-foreground" />
+                          <div className="w-10 h-10 md:w-12 md:h-12 bg-muted rounded-lg flex items-center justify-center">
+                            <MapPin className="h-5 w-5 md:h-6 md:w-6 text-muted-foreground" />
                           </div>
-                          <div>
-                            <h4 className="font-medium">{location}</h4>
-                            <p className="text-sm text-muted-foreground">
+                          <div className="min-w-0 flex-1">
+                            <h4 className="font-medium truncate">{location}</h4>
+                            <p className="text-sm text-muted-foreground truncate">
                               {encounter ? (
                                 <span className="text-primary">
                                   {encounter.nickname || encounter.name} (Lv.{" "}
@@ -626,9 +685,9 @@ export default function PokemonSoullink() {
           <TabsContent value="team" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>
+                <CardTitle className="text-lg md:text-xl">
                   Current Team –{" "}
-                  {data[activePlayer].name ||
+                  {data[activePlayer]?.name ||
                     `Player ${activePlayer.slice(-1)}`}
                 </CardTitle>
                 <CardDescription>
@@ -636,7 +695,7 @@ export default function PokemonSoullink() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {data[activePlayer].team.length > 0 ? (
+                {data[activePlayer]?.team?.length > 0 ? (
                   <div className="grid gap-4">
                     {data[activePlayer].team.map((pokemon) => (
                       <PokemonCard
@@ -644,8 +703,8 @@ export default function PokemonSoullink() {
                         pokemon={pokemon}
                         onKill={handleKillPokemon}
                         onDelete={handleDeletePokemon}
-                        onToggleParty={handleToggleParty} // <- Diese Zeile hinzufügen
-                        partyCount={partyCount} // <- Diese Zeile hinzufügen
+                        onToggleParty={handleToggleParty}
+                        partyCount={partyCount}
                       />
                     ))}
                   </div>
@@ -670,8 +729,8 @@ export default function PokemonSoullink() {
               {catalog.badgeSections.map((section) => (
                 <Card key={section.title}>
                   <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Trophy className="h-5 w-5" />
+                    <CardTitle className="flex items-center gap-2 text-lg md:text-xl">
+                      <Trophy className="h-4 w-4 md:h-5 md:w-5" />
                       {section.title}
                     </CardTitle>
                     <CardDescription>
@@ -680,19 +739,22 @@ export default function PokemonSoullink() {
                   </CardHeader>
                   <CardContent>
                     {section.badges.length > 0 ? (
-                      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         {section.badges.map((badge) => (
                           <BadgeCard
                             key={badge.id}
                             badge={badge}
-                            player1Earned={
-                              data.player1.earnedBadges[badge.id] || false
-                            }
-                            player2Earned={
-                              data.player2.earnedBadges[badge.id] || false
-                            }
-                            player1Name={data.player1.name || "Player 1"}
-                            player2Name={data.player2.name || "Player 2"}
+                            players={activePlayers.reduce((acc, playerKey) => {
+                              acc[playerKey] = {
+                                earned:
+                                  data[playerKey]?.earnedBadges[badge.id] ||
+                                  false,
+                                name:
+                                  data[playerKey]?.name ||
+                                  `Player ${playerKey.slice(-1)}`,
+                              };
+                              return acc;
+                            }, {})}
                             onToggleBadge={handleToggleBadge}
                           />
                         ))}
@@ -714,10 +776,10 @@ export default function PokemonSoullink() {
           <TabsContent value="graveyard" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Skull className="h-5 w-5" />
+                <CardTitle className="flex items-center gap-2 text-lg md:text-xl">
+                  <Skull className="h-4 w-4 md:h-5 md:w-5" />
                   Pokemon Graveyard –{" "}
-                  {data[activePlayer].name ||
+                  {data[activePlayer]?.name ||
                     `Player ${activePlayer.slice(-1)}`}
                 </CardTitle>
                 <CardDescription>
@@ -725,7 +787,7 @@ export default function PokemonSoullink() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {data[activePlayer].graveyard.length > 0 ? (
+                {data[activePlayer]?.graveyard?.length > 0 ? (
                   <div className="grid gap-4">
                     {data[activePlayer].graveyard.map((pokemon) => (
                       <PokemonCard
@@ -796,7 +858,7 @@ function StarterPokemonSprite({ pokemon }: { pokemon: Pokemon }) {
 
   if (loading) {
     return (
-      <div className="w-12 h-12 bg-slate-200 rounded-full animate-pulse"></div>
+      <div className="w-10 h-10 md:w-12 md:h-12 bg-slate-200 rounded-full animate-pulse"></div>
     );
   }
 
@@ -805,21 +867,21 @@ function StarterPokemonSprite({ pokemon }: { pokemon: Pokemon }) {
       <img
         src={sprite}
         alt={pokemon.species}
-        className={`w-12 h-12 object-contain rounded-full bg-gradient-to-br from-blue-50 to-purple-50 border-2 border-green-300 shadow-sm
+        className={`w-10 h-10 md:w-12 md:h-12 object-contain rounded-full bg-gradient-to-br from-blue-50 to-purple-50 border-2 border-green-300 shadow-sm
           ${pokemon.status === "dead" ? "grayscale opacity-60" : ""}
         `}
       />
       {pokemon.status === "dead" && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-3 h-3 bg-red-500 rounded-full border border-white"></div>
+          <div className="w-2 h-2 md:w-3 md:h-3 bg-red-500 rounded-full border border-white"></div>
         </div>
       )}
-      <div className="absolute -top-1 -right-1 w-4 h-4 bg-yellow-500 rounded-full border border-white flex items-center justify-center">
-        <Crown className="w-2 h-2 text-white" />
+      <div className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-yellow-500 rounded-full border border-white flex items-center justify-center">
+        <Crown className="w-1.5 h-1.5 md:w-2 md:h-2 text-white" />
       </div>
     </div>
   ) : (
-    <div className="w-12 h-12 border-2 border-green-300 bg-gradient-to-br from-green-100 to-blue-100 text-green-700 font-bold text-lg rounded-full flex items-center justify-center">
+    <div className="w-10 h-10 md:w-12 md:h-12 border-2 border-green-300 bg-gradient-to-br from-green-100 to-blue-100 text-green-700 font-bold text-sm md:text-lg rounded-full flex items-center justify-center">
       {pokemon.species[0]}
     </div>
   );
@@ -835,13 +897,13 @@ function StarterTeamDisplay({
   return (
     <div className="mt-4">
       <div className="flex items-center gap-2 mb-3">
-        <Users className="h-4 w-4 text-green-600" />
-        <h4 className="font-semibold text-sm text-green-700">
+        <Users className="h-3 w-3 md:h-4 md:w-4 text-green-600" />
+        <h4 className="font-semibold text-xs md:text-sm text-green-700">
           Starter Team ({starterTeam.length}/6)
         </h4>
       </div>
 
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-1.5 md:gap-2 flex-wrap">
         {Array.from({ length: 6 }).map((_, index) => {
           const pokemon = starterTeam[index];
 
@@ -849,7 +911,7 @@ function StarterTeamDisplay({
             return (
               <div key={pokemon.id} className="relative group">
                 <StarterPokemonSprite pokemon={pokemon} />
-                <div className="absolute bottom-12 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                <div className="absolute bottom-10 md:bottom-12 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
                   {pokemon.nickname || pokemon.name} (Lv. {pokemon.level})
                 </div>
               </div>
@@ -859,7 +921,7 @@ function StarterTeamDisplay({
           return (
             <div
               key={index}
-              className="w-12 h-12 border-2 border-dashed border-gray-300 rounded-full flex items-center justify-center text-gray-400"
+              className="w-10 h-10 md:w-12 md:h-12 border-2 border-dashed border-gray-300 rounded-full flex items-center justify-center text-gray-400"
             >
               <span className="text-xs">{index + 1}</span>
             </div>
@@ -870,584 +932,140 @@ function StarterTeamDisplay({
   );
 }
 
-function SoullinkConnections({ data }: { data: any }) {
-  const [connections, setConnections] = useState<
-    Array<{
-      location: string;
-      player1Pokemon: Pokemon | null;
-      player2Pokemon: Pokemon | null;
-      isComplete: boolean;
-    }>
-  >([]);
-
-  useEffect(() => {
-    const findLocationConnections = () => {
-      const locationMap = new Map<
-        string,
-        {
-          location: string;
-          player1Pokemon: Pokemon | null;
-          player2Pokemon: Pokemon | null;
-        }
-      >();
-
-      // Sammle alle Pokemon beider Spieler
-      const allPlayer1Pokemon = [
-        ...data.player1.team,
-        ...data.player1.graveyard,
-        ...Object.values(data.player1.encounters).filter(Boolean),
-      ];
-
-      const allPlayer2Pokemon = [
-        ...data.player2.team,
-        ...data.player2.graveyard,
-        ...Object.values(data.player2.encounters).filter(Boolean),
-      ];
-
-      // Gruppiere nach Location
-      allPlayer1Pokemon.forEach((pokemon: Pokemon) => {
-        if (!locationMap.has(pokemon.location)) {
-          locationMap.set(pokemon.location, {
-            location: pokemon.location,
-            player1Pokemon: null,
-            player2Pokemon: null,
-          });
-        }
-        locationMap.get(pokemon.location)!.player1Pokemon = pokemon;
-      });
-
-      allPlayer2Pokemon.forEach((pokemon: Pokemon) => {
-        if (!locationMap.has(pokemon.location)) {
-          locationMap.set(pokemon.location, {
-            location: pokemon.location,
-            player1Pokemon: null,
-            player2Pokemon: null,
-          });
-        }
-        locationMap.get(pokemon.location)!.player2Pokemon = pokemon;
-      });
-
-      // Konvertiere zu Array mit isComplete Flag
-      const newConnections = Array.from(locationMap.values())
-        .filter((conn) => conn.player1Pokemon || conn.player2Pokemon)
-        .map((conn) => ({
-          ...conn,
-          isComplete: !!(conn.player1Pokemon && conn.player2Pokemon),
-        }))
-        .sort((a, b) => {
-          // Komplette Links zuerst, dann alphabetisch
-          if (a.isComplete && !b.isComplete) return -1;
-          if (!a.isComplete && b.isComplete) return 1;
-          return a.location.localeCompare(b.location);
-        });
-
-      setConnections(newConnections);
-    };
-
-    findLocationConnections();
-  }, [data]);
-
-  const completeConnections = connections.filter((c) => c.isComplete);
-  const incompleteConnections = connections.filter((c) => !c.isComplete);
-
-  return (
-    <div className="space-y-6">
-      {/* Active Soullinks */}
-      {completeConnections.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ChevronRight className="h-5 w-5 text-purple-500" />
-              Active Soullinks ({completeConnections.length})
-            </CardTitle>
-            <CardDescription>
-              Pokemon linked by shared encounter locations - if one falls, both
-              are affected
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {completeConnections.map((connection) => (
-                <LocationSoullinkCard
-                  key={connection.location}
-                  connection={connection}
-                  player1Name={data.player1.name || "Player 1"}
-                  player2Name={data.player2.name || "Player 2"}
-                />
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Potential Links */}
-      {incompleteConnections.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <MapPin className="h-5 w-5 text-gray-500" />
-              Potential Soullinks ({incompleteConnections.length})
-            </CardTitle>
-            <CardDescription>
-              Locations where only one player has caught a Pokemon
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3">
-              {incompleteConnections.map((connection) => (
-                <LocationSoullinkCard
-                  key={connection.location}
-                  connection={connection}
-                  player1Name={data.player1.name || "Player 1"}
-                  player2Name={data.player2.name || "Player 2"}
-                />
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Empty State */}
-      {connections.length === 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ChevronRight className="h-5 w-5 text-purple-500" />
-              Location-Based Soullinks
-            </CardTitle>
-            <CardDescription>
-              Pokemon from the same location are automatically linked
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-center py-8">
-              <div className="w-16 h-16 bg-purple-100 rounded-full mx-auto mb-4 flex items-center justify-center">
-                <MapPin className="h-8 w-8 text-purple-400" />
-              </div>
-              <p className="text-muted-foreground">
-                No encounters yet - start catching Pokemon to create Soullinks
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-function LocationSoullinkCard({
-  connection,
-  player1Name,
-  player2Name,
-}: {
-  connection: {
-    location: string;
-    player1Pokemon: Pokemon | null;
-    player2Pokemon: Pokemon | null;
-    isComplete: boolean;
-  };
-  player1Name: string;
-  player2Name: string;
-}) {
-  const p1 = connection.player1Pokemon;
-  const p2 = connection.player2Pokemon;
-
-  // Handle incomplete connections
-  if (!connection.isComplete) {
-    const existingPokemon = p1 || p2;
-    const missingPlayer = p1 ? player2Name : player1Name;
-
-    if (!existingPokemon) {
-      return null; // Should not happen, but safety check
-    }
-
-    return (
-      <div className="flex items-center justify-between p-4 border border-dashed border-gray-300 rounded-lg bg-gray-50/50">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gray-200 rounded-lg flex items-center justify-center">
-            <MapPin className="h-5 w-5 text-gray-400" />
-          </div>
-          <div>
-            <h4 className="font-medium text-sm">{connection.location}</h4>
-            <p className="text-xs text-muted-foreground">
-              {existingPokemon.nickname || existingPokemon.name} (
-              {existingPokemon.status}) • Waiting for {missingPlayer} encounter
-            </p>
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-            Incomplete Link
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Handle complete connections - both Pokemon exist
-  if (!p1 || !p2) {
-    console.error("Complete connection missing Pokemon data:", connection);
-    return null;
-  }
-
-  const bothAlive = p1.status === "alive" && p2.status === "alive";
-  const bothDead = p1.status === "dead" && p2.status === "dead";
-  const onlyOneDead = (p1.status === "dead") !== (p2.status === "dead");
-
-  return (
-    <div
-      className={`
-      relative overflow-hidden rounded-xl border-2 p-6 transition-all duration-300
-      ${
-        bothAlive
-          ? "border-green-300 bg-gradient-to-r from-green-50 to-blue-50"
-          : ""
-      }
-      ${
-        bothDead ? "border-red-300 bg-gradient-to-r from-red-50 to-gray-50" : ""
-      }
-      ${
-        onlyOneDead
-          ? "border-yellow-300 bg-gradient-to-r from-yellow-50 to-orange-50"
-          : ""
-      }
-      ${
-        !bothAlive && !bothDead && !onlyOneDead
-          ? "border-gray-300 bg-gradient-to-r from-gray-50 to-gray-100"
-          : ""
-      }
-    `}
-    >
-      {/* Location Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <MapPin className="h-4 w-4 text-muted-foreground" />
-          <span className="font-semibold text-sm">{connection.location}</span>
-        </div>
-        <div>
-          {bothAlive && (
-            <div className="bg-green-500 text-white px-2 py-1 rounded-full text-xs font-bold">
-              AKTIVER LINK
-            </div>
-          )}
-          {bothDead && (
-            <div className="bg-red-500 text-white px-2 py-1 rounded-full text-xs font-bold">
-              TOTER LINK
-            </div>
-          )}
-          {onlyOneDead && (
-            <div className="bg-yellow-500 text-white px-2 py-1 rounded-full text-xs font-bold">
-              GEFAHR!
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 items-center gap-4">
-        {/* Player 1 Pokemon */}
-        <div className="text-center space-y-2">
-          <StarterPokemonSprite pokemon={p1} />
-          <div>
-            <p className="font-semibold text-sm">{p1.nickname || p1.name}</p>
-            <p className="text-xs text-muted-foreground">
-              {player1Name} • Lv. {p1.level}
-            </p>
-            <div
-              className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium
-              ${
-                p1.status === "alive"
-                  ? "bg-green-100 text-green-700"
-                  : "bg-red-100 text-red-700"
-              }
-            `}
-            >
-              {p1.status === "alive" ? "LEBENDIG" : "K.O."}
-            </div>
-          </div>
-        </div>
-
-        {/* Connection Indicator */}
-        <div className="text-center">
-          <div className="flex items-center justify-center">
-            <div
-              className={`w-8 h-0.5 ${
-                bothAlive ? "bg-green-400" : "bg-red-400"
-              }`}
-            ></div>
-            <div
-              className={`w-6 h-6 rounded-full border-2 mx-2 flex items-center justify-center
-              ${
-                bothAlive
-                  ? "border-green-400 bg-green-100"
-                  : "border-red-400 bg-red-100"
-              }
-            `}
-            >
-              <MapPin
-                className={`w-3 h-3 ${
-                  bothAlive ? "text-green-600" : "text-red-600"
-                }`}
-              />
-            </div>
-            <div
-              className={`w-8 h-0.5 ${
-                bothAlive ? "bg-green-400" : "bg-red-400"
-              }`}
-            ></div>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Gleicher Ort</p>
-        </div>
-
-        {/* Player 2 Pokemon */}
-        <div className="text-center space-y-2">
-          <StarterPokemonSprite pokemon={p2} />
-          <div>
-            <p className="font-semibold text-sm">{p2.nickname || p2.name}</p>
-            <p className="text-xs text-muted-foreground">
-              {player2Name} • Lv. {p2.level}
-            </p>
-            <div
-              className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium
-              ${
-                p2.status === "alive"
-                  ? "bg-green-100 text-green-700"
-                  : "bg-red-100 text-red-700"
-              }
-            `}
-            >
-              {p2.status === "alive" ? "LEBENDIG" : "K.O."}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Info Message for Mixed Status */}
-      {onlyOneDead && (
-        <div className="mt-4 p-3 bg-gray-100 border border-gray-300 rounded-lg">
-          <p className="text-sm font-medium text-gray-800">
-            ℹ️ Ein Pokémon von {connection.location} ist gefallen, das andere
-            lebt noch.
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-const mockConnections = [
-  {
-    location: "Route 1",
-    player1Pokemon: {
-      name: "Pikachu",
-      nickname: "Sparky",
-      level: 15,
-      status: "alive",
-    },
-    player2Pokemon: {
-      name: "Charmander",
-      nickname: "Blaze",
-      level: 14,
-      status: "alive",
-    },
-    isComplete: true,
-  },
-  {
-    location: "Viridian Forest",
-    player1Pokemon: {
-      name: "Caterpie",
-      nickname: "Wormy",
-      level: 8,
-      status: "dead",
-    },
-    player2Pokemon: {
-      name: "Weedle",
-      nickname: null,
-      level: 7,
-      status: "dead",
-    },
-    isComplete: true,
-  },
-  {
-    location: "Mt. Moon",
-    player1Pokemon: {
-      name: "Geodude",
-      nickname: "Rocky",
-      level: 12,
-      status: "alive",
-    },
-    player2Pokemon: {
-      name: "Zubat",
-      nickname: "Wings",
-      level: 11,
-      status: "dead",
-    },
-    isComplete: true,
-  },
-];
-
+// UPDATED: Enhanced Soullink Manager for 3+ players
 function SoullinkManager({ data }: { data: any }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [sortFilter, setSortFilter] = useState("all");
 
-  // FIXED: Korrigierte Logik für Soullink-Erkennung
+  const activePlayers = useMemo(() => {
+    return (Object.keys(data) as PlayerKey[]).filter(
+      (key) => key.startsWith("player") && data[key]
+    );
+  }, [data]);
+
   const connections = useMemo(() => {
     const locationMap = new Map<
       string,
       {
         location: string;
-        player1Pokemon: Pokemon | null;
-        player2Pokemon: Pokemon | null;
+        playerPokemon: Record<PlayerKey, Pokemon | null>;
       }
     >();
 
-    // FIXED: Sammle ALLE Pokemon (lebende UND tote) beider Spieler
-    const allPlayer1Pokemon = [
-      ...data.player1.team,
-      ...data.player1.graveyard,
-      ...Object.values(data.player1.encounters).filter(Boolean),
-    ];
+    // Collect all Pokemon for all active players
+    activePlayers.forEach((playerKey) => {
+      const allPlayerPokemon = [
+        ...data[playerKey].team,
+        ...data[playerKey].graveyard,
+        ...Object.values(data[playerKey].encounters).filter(Boolean),
+      ];
 
-    const allPlayer2Pokemon = [
-      ...data.player2.team,
-      ...data.player2.graveyard,
-      ...Object.values(data.player2.encounters).filter(Boolean),
-    ];
+      allPlayerPokemon.forEach((pokemon: Pokemon) => {
+        if (!locationMap.has(pokemon.location)) {
+          locationMap.set(pokemon.location, {
+            location: pokemon.location,
+            playerPokemon: activePlayers.reduce((acc, key) => {
+              acc[key] = null;
+              return acc;
+            }, {} as Record<PlayerKey, Pokemon | null>),
+          });
+        }
 
-    console.log(
-      "Player 1 Pokemon:",
-      allPlayer1Pokemon.map((p) => `${p.name} (${p.location}) - ${p.status}`)
-    );
-    console.log(
-      "Player 2 Pokemon:",
-      allPlayer2Pokemon.map((p) => `${p.name} (${p.location}) - ${p.status}`)
-    );
-
-    // FIXED: Gruppiere nach Location - nehme das neueste Pokemon pro Location pro Spieler
-    allPlayer1Pokemon.forEach((pokemon: Pokemon) => {
-      if (!locationMap.has(pokemon.location)) {
-        locationMap.set(pokemon.location, {
-          location: pokemon.location,
-          player1Pokemon: null,
-          player2Pokemon: null,
-        });
-      }
-
-      const current = locationMap.get(pokemon.location)!;
-      // Überschreibe nur wenn noch kein Pokemon da ist oder das neue Pokemon neuer ist
-      if (
-        !current.player1Pokemon ||
-        new Date(pokemon.caughtAt) > new Date(current.player1Pokemon.caughtAt)
-      ) {
-        current.player1Pokemon = pokemon;
-      }
+        const current = locationMap.get(pokemon.location)!;
+        if (
+          !current.playerPokemon[playerKey] ||
+          new Date(pokemon.caughtAt) >
+            new Date(current.playerPokemon[playerKey]!.caughtAt)
+        ) {
+          current.playerPokemon[playerKey] = pokemon;
+        }
+      });
     });
 
-    allPlayer2Pokemon.forEach((pokemon: Pokemon) => {
-      if (!locationMap.has(pokemon.location)) {
-        locationMap.set(pokemon.location, {
-          location: pokemon.location,
-          player1Pokemon: null,
-          player2Pokemon: null,
-        });
-      }
-
-      const current = locationMap.get(pokemon.location)!;
-      // Überschreibe nur wenn noch kein Pokemon da ist oder das neue Pokemon neuer ist
-      if (
-        !current.player2Pokemon ||
-        new Date(pokemon.caughtAt) > new Date(current.player2Pokemon.caughtAt)
-      ) {
-        current.player2Pokemon = pokemon;
-      }
-    });
-
-    // Konvertiere zu Array mit isComplete Flag
+    // Convert to array with completion status
     const result = Array.from(locationMap.values())
-      .filter((conn) => conn.player1Pokemon || conn.player2Pokemon)
-      .map((conn) => ({
-        ...conn,
-        isComplete: !!(conn.player1Pokemon && conn.player2Pokemon),
-      }))
+      .filter((conn) =>
+        Object.values(conn.playerPokemon).some((p) => p !== null)
+      )
+      .map((conn) => {
+        const pokemonCount = Object.values(conn.playerPokemon).filter(
+          (p) => p !== null
+        ).length;
+        return {
+          ...conn,
+          isComplete: pokemonCount >= 2, // At least 2 players have Pokemon here
+          pokemonCount,
+        };
+      })
       .sort((a, b) => {
-        // Sortierung: Komplette Links zuerst, dann nach Status-Priorität
+        // Sort by completion and danger level
         if (a.isComplete && !b.isComplete) return -1;
         if (!a.isComplete && b.isComplete) return 1;
 
-        // Für komplette Links: Gefahr > Lebendig > Tot
         if (a.isComplete && b.isComplete) {
-          const getStatusPriority = (conn) => {
-            const p1 = conn.player1Pokemon!;
-            const p2 = conn.player2Pokemon!;
-            const bothAlive = p1.status === "alive" && p2.status === "alive";
-            const bothDead = p1.status === "dead" && p2.status === "dead";
-            const onlyOneDead =
-              (p1.status === "dead") !== (p2.status === "dead");
+          const getDangerLevel = (conn) => {
+            const pokemon = Object.values(conn.playerPokemon).filter(
+              (p) => p !== null
+            );
+            const aliveCount = pokemon.filter(
+              (p) => p!.status === "alive"
+            ).length;
+            const deadCount = pokemon.filter(
+              (p) => p!.status === "dead"
+            ).length;
 
-            if (onlyOneDead) return 0; // Gefahr - höchste Priorität
-            if (bothAlive) return 1; // Lebendig
-            if (bothDead) return 2; // Tot
+            if (aliveCount > 0 && deadCount > 0) return 0; // Mixed - highest danger
+            if (aliveCount === pokemon.length) return 1; // All alive
+            if (deadCount === pokemon.length) return 2; // All dead
             return 3;
           };
 
-          const priorityDiff = getStatusPriority(a) - getStatusPriority(b);
-          if (priorityDiff !== 0) return priorityDiff;
+          const dangerDiff = getDangerLevel(a) - getDangerLevel(b);
+          if (dangerDiff !== 0) return dangerDiff;
         }
 
         return a.location.localeCompare(b.location);
       });
 
-    console.log(
-      "Final connections:",
-      result.map((c) => ({
-        location: c.location,
-        p1: c.player1Pokemon
-          ? `${c.player1Pokemon.name} (${c.player1Pokemon.status})`
-          : "none",
-        p2: c.player2Pokemon
-          ? `${c.player2Pokemon.name} (${c.player2Pokemon.status})`
-          : "none",
-        complete: c.isComplete,
-      }))
-    );
-
     return result;
-  }, [data]);
+  }, [data, activePlayers]);
 
-  // Filter und Sort Logic mit echten Daten
   const filteredConnections = useMemo(() => {
     let filtered = connections.filter((connection) => {
-      // Search by Pokemon name, nickname, or location
       const searchLower = searchTerm.toLowerCase();
-      const p1 = connection.player1Pokemon;
-      const p2 = connection.player2Pokemon;
-
-      const p1Name = p1 ? (p1.nickname || p1.name).toLowerCase() : "";
-      const p2Name = p2 ? (p2.nickname || p2.name).toLowerCase() : "";
       const location = connection.location.toLowerCase();
 
+      const pokemonNames = Object.values(connection.playerPokemon)
+        .filter((p) => p !== null)
+        .map((p) => (p!.nickname || p!.name).toLowerCase());
+
       const matchesSearch =
-        p1Name.includes(searchLower) ||
-        p2Name.includes(searchLower) ||
-        location.includes(searchLower);
+        location.includes(searchLower) ||
+        pokemonNames.some((name) => name.includes(searchLower));
 
       if (!matchesSearch) return false;
 
-      // Filter by status (nur für complete connections)
       if (!connection.isComplete) {
         return sortFilter === "all";
       }
 
-      const bothAlive = p1!.status === "alive" && p2!.status === "alive";
-      const bothDead = p1!.status === "dead" && p2!.status === "dead";
-      const onlyOneDead = (p1!.status === "dead") !== (p2!.status === "dead");
+      const pokemon = Object.values(connection.playerPokemon).filter(
+        (p) => p !== null
+      );
+      const aliveCount = pokemon.filter((p) => p!.status === "alive").length;
+      const deadCount = pokemon.filter((p) => p!.status === "dead").length;
+
+      const allAlive = aliveCount === pokemon.length;
+      const allDead = deadCount === pokemon.length;
+      const mixed = aliveCount > 0 && deadCount > 0;
 
       switch (sortFilter) {
         case "alive":
-          return bothAlive;
+          return allAlive;
         case "dead":
-          return bothDead;
+          return allDead;
         case "danger":
-          return onlyOneDead;
+          return mixed;
         default:
           return true;
       }
@@ -1468,15 +1086,19 @@ function SoullinkManager({ data }: { data: any }) {
         return;
       }
 
-      const p1 = conn.player1Pokemon!;
-      const p2 = conn.player2Pokemon!;
-      const bothAlive = p1.status === "alive" && p2.status === "alive";
-      const bothDead = p1.status === "dead" && p2.status === "dead";
-      const onlyOneDead = (p1.status === "dead") !== (p2.status === "dead");
+      const pokemon = Object.values(conn.playerPokemon).filter(
+        (p) => p !== null
+      );
+      const aliveCount = pokemon.filter((p) => p!.status === "alive").length;
+      const deadCount = pokemon.filter((p) => p!.status === "dead").length;
 
-      if (onlyOneDead) danger++;
-      else if (bothAlive) alive++;
-      else if (bothDead) dead++;
+      const allAlive = aliveCount === pokemon.length;
+      const allDead = deadCount === pokemon.length;
+      const mixed = aliveCount > 0 && deadCount > 0;
+
+      if (mixed) danger++;
+      else if (allAlive) alive++;
+      else if (allDead) dead++;
     });
 
     return { alive, dead, danger, incomplete, total: connections.length };
@@ -1489,13 +1111,13 @@ function SoullinkManager({ data }: { data: any }) {
       {/* Search and Filter Controls */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ChevronRight className="h-5 w-5 text-purple-500" />
-            Soullink Manager
+          <CardTitle className="flex items-center gap-2 text-lg md:text-xl">
+            <ChevronRight className="h-4 w-4 md:h-5 md:w-5 text-purple-500" />
+            Soullink Manager ({activePlayers.length} Players)
           </CardTitle>
           <CardDescription>
-            Verwalte deine Pokémon Soullink Verbindungen - automatisch basierend
-            auf gleichen Locations
+            Manage your Pokemon Soullink connections - automatically based on
+            shared locations
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1504,22 +1126,23 @@ function SoullinkManager({ data }: { data: any }) {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
             <Input
               type="text"
-              placeholder="Suche nach Pokémon-Namen, Spitznamen oder Orten..."
+              placeholder="Search Pokemon names, nicknames, or locations..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10"
             />
           </div>
 
-          {/* Filter Buttons */}
+          {/* Filter Buttons - Mobile optimized */}
           <div className="flex flex-wrap gap-2">
             <Button
               variant={sortFilter === "all" ? "default" : "outline"}
               size="sm"
               onClick={() => setSortFilter("all")}
+              className="text-xs md:text-sm"
             >
-              <Filter className="w-4 h-4 mr-1" />
-              Alle ({counts.total})
+              <Filter className="w-3 h-3 md:w-4 md:h-4 mr-1" />
+              All ({counts.total})
             </Button>
 
             {counts.danger > 0 && (
@@ -1527,9 +1150,9 @@ function SoullinkManager({ data }: { data: any }) {
                 variant={sortFilter === "danger" ? "default" : "outline"}
                 size="sm"
                 onClick={() => setSortFilter("danger")}
-                className="border-yellow-300 text-yellow-700 hover:bg-yellow-50"
+                className="border-yellow-300 text-yellow-700 hover:bg-yellow-50 text-xs md:text-sm"
               >
-                ⚠️ Gefahr ({counts.danger})
+                ⚠️ Danger ({counts.danger})
               </Button>
             )}
 
@@ -1537,45 +1160,36 @@ function SoullinkManager({ data }: { data: any }) {
               variant={sortFilter === "alive" ? "default" : "outline"}
               size="sm"
               onClick={() => setSortFilter("alive")}
-              className="border-green-300 text-green-700 hover:bg-green-50"
+              className="border-green-300 text-green-700 hover:bg-green-50 text-xs md:text-sm"
             >
-              💚 Aktive Links ({counts.alive})
+              💚 Active ({counts.alive})
             </Button>
 
             <Button
               variant={sortFilter === "dead" ? "default" : "outline"}
               size="sm"
               onClick={() => setSortFilter("dead")}
-              className="border-red-300 text-red-700 hover:bg-red-50"
+              className="border-red-300 text-red-700 hover:bg-red-50 text-xs md:text-sm"
             >
-              💀 Tote Links ({counts.dead})
+              💀 Dead ({counts.dead})
             </Button>
 
             {counts.incomplete > 0 && (
               <Button
                 variant="outline"
                 size="sm"
-                className="border-gray-300 text-gray-700 hover:bg-gray-50"
+                className="border-gray-300 text-gray-700 hover:bg-gray-50 text-xs md:text-sm"
               >
-                📍 Unvollständig ({counts.incomplete})
+                📍 Incomplete ({counts.incomplete})
               </Button>
             )}
           </div>
 
-          {/* Results Count */}
           {searchTerm && (
             <div className="text-sm text-muted-foreground">
-              {filteredConnections.length} Ergebnisse für "{searchTerm}"
+              {filteredConnections.length} results for "{searchTerm}"
             </div>
           )}
-
-          {/* Debug Info (entferne das später) */}
-          <details className="text-xs text-gray-500 border p-2 rounded">
-            <summary>Debug Info (klicken zum erweitern)</summary>
-            <pre className="mt-2 whitespace-pre-wrap">
-              {JSON.stringify(counts, null, 2)}
-            </pre>
-          </details>
         </CardContent>
       </Card>
 
@@ -1587,23 +1201,26 @@ function SoullinkManager({ data }: { data: any }) {
               <Search className="w-12 h-12 mx-auto mb-4 text-gray-300" />
               <p className="text-lg font-medium text-muted-foreground">
                 {connections.length === 0
-                  ? "Keine Soullinks gefunden"
-                  : "Keine Verbindungen gefunden"}
+                  ? "No Soullinks found"
+                  : "No connections match your search"}
               </p>
               <p className="text-sm text-muted-foreground">
                 {connections.length === 0
-                  ? "Beginne mit dem Fangen von Pokémon um Soullinks zu erstellen"
-                  : "Versuche einen anderen Suchbegriff oder Filter"}
+                  ? "Start catching Pokemon to create Soullinks"
+                  : "Try a different search term or filter"}
               </p>
             </CardContent>
           </Card>
         ) : (
           filteredConnections.map((connection, index) => (
-            <LocationSoullinkCard
+            <MultiPlayerSoullinkCard
               key={`${connection.location}-${index}`}
               connection={connection}
-              player1Name={data.player1.name || "Player 1"}
-              player2Name={data.player2.name || "Player 2"}
+              players={activePlayers.reduce((acc, playerKey) => {
+                acc[playerKey] =
+                  data[playerKey]?.name || `Player ${playerKey.slice(-1)}`;
+                return acc;
+              }, {} as Record<PlayerKey, string>)}
             />
           ))
         )}
@@ -1613,35 +1230,43 @@ function SoullinkManager({ data }: { data: any }) {
       {connections.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Statistiken</CardTitle>
+            <CardTitle className="text-lg md:text-xl">Statistics</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="text-center p-4 bg-green-50 rounded-lg">
-                <div className="text-2xl font-bold text-green-600">
+              <div className="text-center p-3 md:p-4 bg-green-50 rounded-lg">
+                <div className="text-xl md:text-2xl font-bold text-green-600">
                   {counts.alive}
                 </div>
-                <div className="text-sm text-green-700">Aktive Links</div>
+                <div className="text-xs md:text-sm text-green-700">
+                  Active Links
+                </div>
               </div>
-              <div className="text-center p-4 bg-red-50 rounded-lg">
-                <div className="text-2xl font-bold text-red-600">
+              <div className="text-center p-3 md:p-4 bg-red-50 rounded-lg">
+                <div className="text-xl md:text-2xl font-bold text-red-600">
                   {counts.dead}
                 </div>
-                <div className="text-sm text-red-700">Tote Links</div>
+                <div className="text-xs md:text-sm text-red-700">
+                  Dead Links
+                </div>
               </div>
               {counts.danger > 0 && (
-                <div className="text-center p-4 bg-yellow-50 rounded-lg">
-                  <div className="text-2xl font-bold text-yellow-600">
+                <div className="text-center p-3 md:p-4 bg-yellow-50 rounded-lg">
+                  <div className="text-xl md:text-2xl font-bold text-yellow-600">
                     {counts.danger}
                   </div>
-                  <div className="text-sm text-yellow-700">In Gefahr</div>
+                  <div className="text-xs md:text-sm text-yellow-700">
+                    In Danger
+                  </div>
                 </div>
               )}
-              <div className="text-center p-4 bg-gray-50 rounded-lg">
-                <div className="text-2xl font-bold text-gray-600">
+              <div className="text-center p-3 md:p-4 bg-gray-50 rounded-lg">
+                <div className="text-xl md:text-2xl font-bold text-gray-600">
                   {counts.incomplete}
                 </div>
-                <div className="text-sm text-gray-700">Unvollständig</div>
+                <div className="text-xs md:text-sm text-gray-700">
+                  Incomplete
+                </div>
               </div>
             </div>
           </CardContent>
@@ -1650,60 +1275,146 @@ function SoullinkManager({ data }: { data: any }) {
     </div>
   );
 }
-// 5. KOMPONENTE: Potential Soullink Card
-function PotentialSoullinkCard({
+
+// NEW: Multi-player Soullink Card Component
+function MultiPlayerSoullinkCard({
   connection,
-  player1Name,
-  player2Name,
+  players,
 }: {
   connection: {
     location: string;
-    player1Pokemon: Pokemon | null;
-    player2Pokemon: Pokemon | null;
+    playerPokemon: Record<PlayerKey, Pokemon | null>;
+    isComplete: boolean;
+    pokemonCount: number;
   };
-  player1Name: string;
-  player2Name: string;
+  players: Record<PlayerKey, string>;
 }) {
-  const existingPokemon =
-    connection.player1Pokemon || connection.player2Pokemon!;
-  const missingPlayer = connection.player1Pokemon ? player2Name : player1Name;
+  const activePokemon = Object.entries(connection.playerPokemon)
+    .filter(([_, pokemon]) => pokemon !== null)
+    .map(([playerKey, pokemon]) => ({
+      playerKey: playerKey as PlayerKey,
+      pokemon: pokemon!,
+    }));
+
+  if (!connection.isComplete) {
+    return (
+      <div className="flex items-center justify-between p-4 border border-dashed border-gray-300 rounded-lg bg-gray-50/50">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 md:w-10 md:h-10 bg-gray-200 rounded-lg flex items-center justify-center">
+            <MapPin className="h-4 w-4 md:h-5 md:w-5 text-gray-400" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h4 className="font-medium text-sm md:text-base">
+              {connection.location}
+            </h4>
+            <p className="text-xs md:text-sm text-muted-foreground">
+              {activePokemon.length} of {Object.keys(players).length} players
+              have Pokemon here
+            </p>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+            Incomplete
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const aliveCount = activePokemon.filter(
+    ({ pokemon }) => pokemon.status === "alive"
+  ).length;
+  const deadCount = activePokemon.filter(
+    ({ pokemon }) => pokemon.status === "dead"
+  ).length;
+
+  const allAlive = aliveCount === activePokemon.length;
+  const allDead = deadCount === activePokemon.length;
+  const mixed = aliveCount > 0 && deadCount > 0;
+
+  let bgClass = "border-gray-300 bg-gradient-to-r from-gray-50 to-gray-100";
+  let statusText = "MIXED";
+  let statusColor = "bg-gray-500";
+
+  if (allAlive) {
+    bgClass = "border-green-300 bg-gradient-to-r from-green-50 to-blue-50";
+    statusText = "ACTIVE LINK";
+    statusColor = "bg-green-500";
+  } else if (allDead) {
+    bgClass = "border-red-300 bg-gradient-to-r from-red-50 to-gray-50";
+    statusText = "DEAD LINK";
+    statusColor = "bg-red-500";
+  } else if (mixed) {
+    bgClass = "border-yellow-300 bg-gradient-to-r from-yellow-50 to-orange-50";
+    statusText = "DANGER!";
+    statusColor = "bg-yellow-500";
+  }
 
   return (
-    <div className="flex items-center justify-between p-4 border border-dashed border-gray-300 rounded-lg bg-gray-50/50">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-gray-200 rounded-lg flex items-center justify-center">
-          <MapPin className="h-5 w-5 text-gray-400" />
+    <div
+      className={`relative overflow-hidden rounded-xl border-2 p-4 md:p-6 transition-all duration-300 ${bgClass}`}
+    >
+      {/* Location Header */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <MapPin className="h-3 w-3 md:h-4 md:w-4 text-muted-foreground" />
+          <span className="font-semibold text-sm md:text-base">
+            {connection.location}
+          </span>
         </div>
-        <div>
-          <h4 className="font-medium text-sm">{connection.location}</h4>
-          <p className="text-xs text-muted-foreground">
-            {existingPokemon.nickname || existingPokemon.name} (
-            {existingPokemon.status}) • Waiting for {missingPlayer} encounter
+        <div
+          className={`${statusColor} text-white px-2 py-1 rounded-full text-xs font-bold`}
+        >
+          {statusText}
+        </div>
+      </div>
+
+      {/* Pokemon Grid */}
+      <div
+        className={`grid gap-4 ${
+          activePokemon.length === 2
+            ? "grid-cols-2"
+            : activePokemon.length === 3
+            ? "grid-cols-3"
+            : "grid-cols-2 md:grid-cols-4"
+        }`}
+      >
+        {activePokemon.map(({ playerKey, pokemon }) => (
+          <div key={playerKey} className="text-center space-y-2">
+            <StarterPokemonSprite pokemon={pokemon} />
+            <div>
+              <p className="font-semibold text-xs md:text-sm truncate">
+                {pokemon.nickname || pokemon.name}
+              </p>
+              <p className="text-xs text-muted-foreground truncate">
+                {players[playerKey]} • Lv. {pokemon.level}
+              </p>
+              <div
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium
+                ${
+                  pokemon.status === "alive"
+                    ? "bg-green-100 text-green-700"
+                    : "bg-red-100 text-red-700"
+                }
+              `}
+              >
+                {pokemon.status === "alive" ? "ALIVE" : "K.O."}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Info Message for Mixed Status */}
+      {mixed && (
+        <div className="mt-4 p-3 bg-gray-100 border border-gray-300 rounded-lg">
+          <p className="text-xs md:text-sm font-medium text-gray-800">
+            ℹ️ Some Pokemon from {connection.location} have fallen while others
+            still live.
           </p>
         </div>
-      </div>
-      <div className="text-right">
-        <div className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-          Incomplete Link
-        </div>
-      </div>
+      )}
     </div>
-  );
-}
-
-function findSoullinkPartner(pokemon: Pokemon, data: any): Pokemon | null {
-  const otherPlayer = pokemon.id.includes("player1") ? "player2" : "player1";
-
-  // Suche Pokemon mit gleicher Location beim anderen Spieler
-  const allOtherPlayerPokemon = [
-    ...data[otherPlayer].team,
-    ...data[otherPlayer].graveyard,
-    ...Object.values(data[otherPlayer].encounters).filter(Boolean),
-  ];
-
-  return (
-    allOtherPlayerPokemon.find(
-      (p: Pokemon) => p && p.location === pokemon.location
-    ) || null
   );
 }

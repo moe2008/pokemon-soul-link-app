@@ -4,10 +4,23 @@ import Peer, { DataConnection } from "peerjs";
 import type { SoullinkData } from "./use-soullink-data";
 
 interface WebRTCMessage {
-  type: "data-update" | "player-update" | "badge-update" | "pokemon-action";
+  type:
+    | "data-update"
+    | "player-update"
+    | "badge-update"
+    | "pokemon-action"
+    | "player-join"
+    | "player-leave";
   payload: any;
   timestamp: number;
   senderId: string;
+}
+
+interface ConnectedPlayer {
+  id: string;
+  connection: DataConnection;
+  playerKey: "player1" | "player2" | "player3";
+  name?: string;
 }
 
 interface RoomInfo {
@@ -15,6 +28,9 @@ interface RoomInfo {
   name: string;
   hostId: string;
   isHost: boolean;
+  maxPlayers: number;
+  currentPlayers: number;
+  connectedPlayers: string[];
 }
 
 export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
@@ -25,9 +41,15 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
     "disconnected" | "connecting" | "connected"
   >("disconnected");
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [myPlayerKey, setMyPlayerKey] = useState<
+    "player1" | "player2" | "player3" | null
+  >(null);
 
   const peer = useRef<Peer | null>(null);
-  const connection = useRef<DataConnection | null>(null);
+  // Für Host: Multiple Connections zu Guests
+  const hostConnections = useRef<Map<string, ConnectedPlayer>>(new Map());
+  // Für Guest: Eine Connection zum Host
+  const guestConnection = useRef<DataConnection | null>(null);
   const isInitialized = useRef(false);
 
   // Hilfsfunktion um aktuelle Daten zu holen
@@ -38,10 +60,18 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
 
   // Clean up function
   const cleanupConnection = useCallback(() => {
-    if (connection.current) {
-      connection.current.removeAllListeners();
-      connection.current.close();
-      connection.current = null;
+    // Clean up host connections
+    hostConnections.current.forEach((player) => {
+      player.connection.removeAllListeners();
+      player.connection.close();
+    });
+    hostConnections.current.clear();
+
+    // Clean up guest connection
+    if (guestConnection.current) {
+      guestConnection.current.removeAllListeners();
+      guestConnection.current.close();
+      guestConnection.current = null;
     }
 
     if (peer.current && !peer.current.destroyed) {
@@ -53,6 +83,7 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
     setIsConnected(false);
     setConnectionStatus("disconnected");
     setPeerId("");
+    setMyPlayerKey(null);
   }, []);
 
   // Initialize PeerJS
@@ -60,7 +91,7 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
     if (isInitialized.current) return;
 
     const initPeer = () => {
-      cleanupConnection(); // Clean up any existing connections
+      cleanupConnection();
 
       const peerInstance = new Peer({
         config: {
@@ -99,17 +130,15 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
 
       peerInstance.on("connection", (conn) => {
         console.log("Incoming connection from:", conn.peer);
-        setupConnection(conn);
+        setupHostConnection(conn);
       });
 
       peerInstance.on("error", (err) => {
         console.error("Peer error:", err);
         setConnectionStatus("disconnected");
 
-        // Handle specific error cases
         if (err.type === "peer-unavailable") {
           console.log("Peer unavailable, cleaning up stored data");
-          // Don't auto-clear data, let user decide
         }
       });
 
@@ -132,19 +161,132 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
     };
   }, [cleanupConnection]);
 
-  // Setup data connection
-  const setupConnection = useCallback((conn: DataConnection) => {
-    // Clean up existing connection
-    if (connection.current && connection.current !== conn) {
-      connection.current.removeAllListeners();
-      connection.current.close();
-    }
+  // Setup connection as HOST (accepting incoming connections)
+  const setupHostConnection = useCallback(
+    (conn: DataConnection) => {
+      // Check if room is full
+      if (hostConnections.current.size >= 2) {
+        console.log("Room is full, rejecting connection");
+        conn.close();
+        return;
+      }
 
-    connection.current = conn;
+      console.log(`Setting up host connection for: ${conn.peer}`);
+
+      conn.on("open", () => {
+        console.log(`Guest ${conn.peer} connected`);
+
+        // Assign player key based on connection order
+        const playerKey =
+          hostConnections.current.size === 0 ? "player2" : "player3";
+
+        const connectedPlayer: ConnectedPlayer = {
+          id: conn.peer,
+          connection: conn,
+          playerKey,
+        };
+
+        hostConnections.current.set(conn.peer, connectedPlayer);
+
+        // Update room info
+        setRoomInfo((prev) =>
+          prev
+            ? {
+                ...prev,
+                currentPlayers: hostConnections.current.size + 1, // +1 for host
+                connectedPlayers: Array.from(hostConnections.current.keys()),
+              }
+            : null
+        );
+
+        // Send player assignment and current data to new player
+        sendToSpecificPlayer(conn, {
+          type: "player-join",
+          payload: {
+            assignedPlayerKey: playerKey,
+            currentData: getCurrentData(),
+            roomInfo: {
+              connectedPlayers: Array.from(
+                hostConnections.current.values()
+              ).map((p) => ({
+                id: p.id,
+                playerKey: p.playerKey,
+              })),
+            },
+          },
+          timestamp: Date.now(),
+          senderId: peerId,
+        });
+
+        // Notify other players about new connection
+        broadcastToGuests(
+          {
+            type: "player-join",
+            payload: {
+              newPlayerId: conn.peer,
+              newPlayerKey: playerKey,
+            },
+            timestamp: Date.now(),
+            senderId: peerId,
+          },
+          conn.peer
+        ); // Exclude the new player from broadcast
+
+        updateConnectionStatus();
+      });
+
+      conn.on("data", (receivedData) => {
+        try {
+          const message = receivedData as WebRTCMessage;
+          console.log("Host received message:", message.type, message.payload);
+          handleHostMessage(message, conn);
+        } catch (error) {
+          console.error("Error parsing message:", error);
+        }
+      });
+
+      conn.on("close", () => {
+        console.log(`Guest ${conn.peer} disconnected`);
+        const player = hostConnections.current.get(conn.peer);
+        if (player) {
+          hostConnections.current.delete(conn.peer);
+
+          // Notify remaining players
+          broadcastToGuests({
+            type: "player-leave",
+            payload: {
+              leftPlayerId: conn.peer,
+              leftPlayerKey: player.playerKey,
+            },
+            timestamp: Date.now(),
+            senderId: peerId,
+          });
+
+          updateRoomInfo();
+          updateConnectionStatus();
+        }
+      });
+
+      conn.on("error", (err) => {
+        console.error(`Connection error with ${conn.peer}:`, err);
+        const player = hostConnections.current.get(conn.peer);
+        if (player) {
+          hostConnections.current.delete(conn.peer);
+          updateRoomInfo();
+          updateConnectionStatus();
+        }
+      });
+    },
+    [peerId, getCurrentData]
+  );
+
+  // Setup connection as GUEST (connecting to host)
+  const setupGuestConnection = useCallback((conn: DataConnection) => {
+    guestConnection.current = conn;
     setConnectionStatus("connecting");
 
     conn.on("open", () => {
-      console.log("Data connection opened");
+      console.log("Connected to host");
       setIsConnected(true);
       setConnectionStatus("connected");
     });
@@ -152,36 +294,73 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
     conn.on("data", (receivedData) => {
       try {
         const message = receivedData as WebRTCMessage;
-        console.log("Received message:", message.type, message.payload);
-        handleIncomingMessage(message);
+        console.log("Guest received message:", message.type, message.payload);
+        handleGuestMessage(message);
       } catch (error) {
         console.error("Error parsing message:", error);
       }
     });
 
     conn.on("close", () => {
-      console.log("Connection closed");
+      console.log("Connection to host closed");
       setIsConnected(false);
       setConnectionStatus("disconnected");
-      if (connection.current === conn) {
-        connection.current = null;
-      }
+      guestConnection.current = null;
+      setMyPlayerKey(null);
     });
 
     conn.on("error", (err) => {
       console.error("Connection error:", err);
       setConnectionStatus("disconnected");
-      if (connection.current === conn) {
-        connection.current = null;
-      }
+      guestConnection.current = null;
+      setMyPlayerKey(null);
     });
   }, []);
 
-  // Handle incoming messages
+  // Handle messages as HOST
+  const handleHostMessage = useCallback(
+    (message: WebRTCMessage, senderConn: DataConnection) => {
+      console.log(
+        `Host processing message from ${message.senderId}:`,
+        message.type
+      );
+
+      // Apply the change locally
+      handleIncomingMessage(message);
+
+      // Broadcast to all OTHER guests (not the sender)
+      broadcastToGuests(message, message.senderId);
+    },
+    []
+  );
+
+  // Handle messages as GUEST
+  const handleGuestMessage = useCallback(
+    (message: WebRTCMessage) => {
+      console.log("Guest processing message:", message.type);
+
+      switch (message.type) {
+        case "player-join":
+          if (message.payload.assignedPlayerKey) {
+            // This is our player assignment
+            setMyPlayerKey(message.payload.assignedPlayerKey);
+            if (message.payload.currentData) {
+              onImportData(message.payload.currentData);
+            }
+          }
+          break;
+
+        default:
+          handleIncomingMessage(message);
+          break;
+      }
+    },
+    [onImportData]
+  );
+
+  // Handle incoming messages (common for both host and guest)
   const handleIncomingMessage = useCallback(
     (message: WebRTCMessage) => {
-      console.log("Processing received message:", message.type);
-
       switch (message.type) {
         case "data-update":
           console.log("Importing full data update:", message.payload);
@@ -299,19 +478,70 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
     [onImportData, getCurrentData]
   );
 
-  // Send message
-  const sendMessage = useCallback((message: WebRTCMessage) => {
-    if (connection.current && connection.current.open) {
-      console.log("Sending message:", message.type, message.payload);
-      connection.current.send(message);
+  // Broadcast message to all guests (as host)
+  const broadcastToGuests = useCallback(
+    (message: WebRTCMessage, excludeId?: string) => {
+      hostConnections.current.forEach((player) => {
+        if (excludeId && player.id === excludeId) return;
+
+        if (player.connection.open) {
+          console.log(`Broadcasting to ${player.id}:`, message.type);
+          player.connection.send(message);
+        }
+      });
+    },
+    []
+  );
+
+  // Send message to specific player (as host)
+  const sendToSpecificPlayer = useCallback(
+    (conn: DataConnection, message: WebRTCMessage) => {
+      if (conn.open) {
+        console.log(`Sending to ${conn.peer}:`, message.type);
+        conn.send(message);
+      }
+    },
+    []
+  );
+
+  // Send message to host (as guest)
+  const sendToHost = useCallback((message: WebRTCMessage) => {
+    if (guestConnection.current && guestConnection.current.open) {
+      console.log("Sending to host:", message.type, message.payload);
+      guestConnection.current.send(message);
       return true;
     } else {
-      console.warn("Cannot send message - connection not open");
+      console.warn("Cannot send message - not connected to host");
       return false;
     }
   }, []);
 
-  // Create room (Host) - Simple room creation without persistence
+  // Update connection status
+  const updateConnectionStatus = useCallback(() => {
+    const isHost = roomInfo?.isHost ?? false;
+
+    if (isHost) {
+      // Host is "connected" when room is created and ready for guests
+      setIsConnected(true);
+      setConnectionStatus("connected");
+    }
+    // Guest connection status is handled in setupGuestConnection
+  }, [roomInfo]);
+
+  // Update room info
+  const updateRoomInfo = useCallback(() => {
+    setRoomInfo((prev) =>
+      prev
+        ? {
+            ...prev,
+            currentPlayers: hostConnections.current.size + 1,
+            connectedPlayers: Array.from(hostConnections.current.keys()),
+          }
+        : null
+    );
+  }, []);
+
+  // Create room (Host)
   const createRoom = useCallback(
     async (roomName: string) => {
       if (!peer.current || !peerId) {
@@ -324,11 +554,19 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
         name: roomName,
         hostId: peerId,
         isHost: true,
+        maxPlayers: 3,
+        currentPlayers: 1,
+        connectedPlayers: [],
       };
 
       setRoomInfo(roomData);
+      setMyPlayerKey("player1"); // Host is always player1
 
-      console.log(`Room created with ID: ${peerId}`);
+      // Host is immediately ready for connections
+      setIsConnected(true);
+      setConnectionStatus("connected");
+
+      console.log(`3-Player room created with ID: ${peerId}`);
 
       return {
         roomId: peerId,
@@ -339,7 +577,7 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
     [peerId]
   );
 
-  // Join room (Guest) - Fixed error handling
+  // Join room (Guest)
   const joinRoom = useCallback(
     async (roomId: string, hostPeerId: string) => {
       if (!peer.current || peer.current.destroyed) {
@@ -348,9 +586,9 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
       }
 
       // Clear any existing connection first
-      if (connection.current) {
-        connection.current.close();
-        connection.current = null;
+      if (guestConnection.current) {
+        guestConnection.current.close();
+        guestConnection.current = null;
       }
 
       setConnectionStatus("connecting");
@@ -363,14 +601,16 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
           serialization: "json",
         });
 
-        // Set up connection handlers
-        setupConnection(conn);
+        setupGuestConnection(conn);
 
         setRoomInfo({
           id: hostPeerId,
           name: "Joined Room",
           hostId: hostPeerId,
           isHost: false,
+          maxPlayers: 3,
+          currentPlayers: 0, // Will be updated when we receive player-join
+          connectedPlayers: [],
         });
 
         return "connecting";
@@ -380,69 +620,41 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
         throw error;
       }
     },
-    [setupConnection]
+    [setupGuestConnection]
   );
 
-  // Leave room - Simple cleanup
+  // Leave room
   const leaveRoom = useCallback(() => {
     console.log("Leaving room...");
 
-    if (connection.current) {
-      connection.current.close();
-      connection.current = null;
+    if (roomInfo?.isHost) {
+      // Host leaving - notify all guests and close connections
+      broadcastToGuests({
+        type: "player-leave",
+        payload: { hostLeaving: true },
+        timestamp: Date.now(),
+        senderId: peerId,
+      });
+
+      hostConnections.current.forEach((player) => {
+        player.connection.close();
+      });
+      hostConnections.current.clear();
+    } else {
+      // Guest leaving - close connection to host
+      if (guestConnection.current) {
+        guestConnection.current.close();
+        guestConnection.current = null;
+      }
     }
 
     setIsConnected(false);
     setRoomInfo(null);
     setConnectionStatus("disconnected");
+    setMyPlayerKey(null);
 
     console.log("Room left");
-  }, []);
-
-  // Manual reconnect function
-  const reconnect = useCallback(async () => {
-    const storedRole = localStorage.getItem("webrtc_role");
-    const storedRoom = localStorage.getItem("webrtc_room");
-    const storedJoinCode = localStorage.getItem("webrtc_join_code");
-
-    if (!peer.current || !peerId) {
-      console.error("Peer not ready for reconnection");
-      return false;
-    }
-
-    if (storedRole === "host" && storedRoom) {
-      try {
-        const roomData = JSON.parse(storedRoom);
-        const result = await createRoom(roomData.name);
-        return !!result;
-      } catch (error) {
-        console.error("Failed to reconnect as host:", error);
-        return false;
-      }
-    } else if (storedRole === "guest" && storedJoinCode) {
-      try {
-        let hostPeerId: string;
-        let roomId: string;
-
-        try {
-          const roomData = JSON.parse(atob(storedJoinCode));
-          hostPeerId = roomData.hostPeerId;
-          roomId = roomData.roomId;
-        } catch {
-          hostPeerId = storedJoinCode;
-          roomId = storedJoinCode;
-        }
-
-        const result = await joinRoom(roomId, hostPeerId);
-        return !!result;
-      } catch (error) {
-        console.error("Failed to reconnect as guest:", error);
-        return false;
-      }
-    }
-
-    return false;
-  }, [peerId, createRoom, joinRoom]);
+  }, [roomInfo, peerId, broadcastToGuests]);
 
   // Sync functions
   const syncData = useCallback(() => {
@@ -455,15 +667,23 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
       senderId: peerId,
     };
 
-    const success = sendMessage(message);
+    let success = false;
+
+    if (roomInfo?.isHost) {
+      broadcastToGuests(message);
+      success = true;
+    } else {
+      success = sendToHost(message);
+    }
+
     if (success) {
       setLastSyncTime(new Date());
     }
     return success;
-  }, [peerId, sendMessage, getCurrentData]);
+  }, [peerId, getCurrentData, roomInfo, broadcastToGuests, sendToHost]);
 
   const syncPlayerUpdate = useCallback(
-    (playerKey: "player1" | "player2", playerData?: any) => {
+    (playerKey: "player1" | "player2" | "player3", playerData?: any) => {
       const freshData = playerData || getCurrentData()[playerKey];
 
       const message: WebRTCMessage = {
@@ -473,13 +693,22 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
         senderId: peerId,
       };
 
-      return sendMessage(message);
+      if (roomInfo?.isHost) {
+        broadcastToGuests(message);
+        return true;
+      } else {
+        return sendToHost(message);
+      }
     },
-    [peerId, sendMessage, getCurrentData]
+    [peerId, getCurrentData, roomInfo, broadcastToGuests, sendToHost]
   );
 
   const syncBadgeUpdate = useCallback(
-    (playerKey: "player1" | "player2", badgeId: string, earned: boolean) => {
+    (
+      playerKey: "player1" | "player2" | "player3",
+      badgeId: string,
+      earned: boolean
+    ) => {
       const message: WebRTCMessage = {
         type: "badge-update",
         payload: { playerKey, badgeId, earned },
@@ -487,15 +716,20 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
         senderId: peerId,
       };
 
-      return sendMessage(message);
+      if (roomInfo?.isHost) {
+        broadcastToGuests(message);
+        return true;
+      } else {
+        return sendToHost(message);
+      }
     },
-    [peerId, sendMessage]
+    [peerId, roomInfo, broadcastToGuests, sendToHost]
   );
 
   const syncPokemonAction = useCallback(
     (
       action: string,
-      playerKey: "player1" | "player2",
+      playerKey: "player1" | "player2" | "player3",
       pokemonData?: any,
       pokemonId?: string,
       cause?: string
@@ -507,9 +741,14 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
         senderId: peerId,
       };
 
-      return sendMessage(message);
+      if (roomInfo?.isHost) {
+        broadcastToGuests(message);
+        return true;
+      } else {
+        return sendToHost(message);
+      }
     },
-    [peerId, sendMessage]
+    [peerId, roomInfo, broadcastToGuests, sendToHost]
   );
 
   return {
@@ -519,16 +758,21 @@ export function useWebRTCSoullink(onImportData: (d: SoullinkData) => void) {
     roomInfo,
     peerId,
     lastSyncTime,
+    myPlayerKey, // NEW: Which player am I?
 
     // Room Management
     createRoom,
     joinRoom,
     leaveRoom,
 
-    // Data Sync
+    // Data Sync (now supports player3)
     syncData,
     syncPlayerUpdate,
     syncBadgeUpdate,
     syncPokemonAction,
+
+    // NEW: Connection info
+    connectedPlayersCount: roomInfo?.currentPlayers || 0,
+    maxPlayers: 3,
   };
 }
